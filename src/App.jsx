@@ -43,6 +43,9 @@ const genderOptions = [
 ];
 
 const fallbackTones = ["blue", "violet", "orange"];
+const MAX_WORK_UPLOAD_BYTES = 500 * 1024 * 1024;
+const CHUNK_SIZE = 5 * 1024 * 1024;
+const WORK_FILE_ACCEPT = "image/*,.pdf,application/pdf,video/mp4,video/webm,video/quicktime";
 
 function App() {
   const [profile, setProfile] = useState(null);
@@ -234,6 +237,9 @@ function TopBar({ activeTab, role, onLogout }) {
 function FeedView({ role }) {
   const [selectedDate, setSelectedDate] = useState("2026-07-20");
   const [filter, setFilter] = useState("all");
+  const [keyword, setKeyword] = useState("");
+  const [searchResults, setSearchResults] = useState(null);
+  const [searching, setSearching] = useState(false);
   const [works, setWorks] = useState([]);
   const [leaderboard, setLeaderboard] = useState([]);
   const [courses, setCourses] = useState([]);
@@ -278,13 +284,55 @@ function FeedView({ role }) {
     await loadFeed();
   }
 
+  async function submitSearch(event) {
+    event.preventDefault();
+    const nextKeyword = keyword.trim();
+    if (!nextKeyword) {
+      setSearchResults(null);
+      return;
+    }
+
+    setSearching(true);
+    setError("");
+    try {
+      setSearchResults(await api.search(nextKeyword));
+    } catch (searchError) {
+      setError(searchError.message || "搜索失败");
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  function clearSearch() {
+    setKeyword("");
+    setSearchResults(null);
+  }
+
   return (
     <section className="marketHome">
       <div className="marketTop">
         <button type="button">📍 新员工培训营</button>
-        <button type="button">搜索作品 / 同学</button>
+        <form className="searchBox" onSubmit={submitSearch}>
+          <input
+            aria-label="搜索作品或同学"
+            onChange={(event) => setKeyword(event.target.value)}
+            placeholder="搜索作品 / 同学"
+            value={keyword}
+          />
+          <button disabled={searching} type="submit">{searching ? "搜索中" : "搜索"}</button>
+        </form>
         <button type="button">{role === "admin" ? "管理" : "···"}</button>
       </div>
+
+      {searchResults && (
+        <SearchResultsPanel
+          keyword={keyword}
+          onClear={clearSearch}
+          onLike={likeWork}
+          onVote={voteWork}
+          results={searchResults}
+        />
+      )}
 
       <div className="schedulePanel">
         <div className="scheduleHead">
@@ -392,17 +440,85 @@ function FeedView({ role }) {
   );
 }
 
+function SearchResultsPanel({ keyword, onClear, onLike, onVote, results }) {
+  const workResults = results.works ?? [];
+  const profileResults = results.profiles ?? [];
+
+  return (
+    <section className="searchResultsPanel">
+      <div className="searchResultsHead">
+        <div>
+          <span>后端搜索</span>
+          <h2>“{keyword.trim()}” 的结果</h2>
+        </div>
+        <button onClick={onClear} type="button">清除搜索</button>
+      </div>
+
+      {workResults.length === 0 && profileResults.length === 0 ? (
+        <EmptyState title="没有搜到结果" text="换个作品标题、同学名字、学校或 MBTI 试试。" />
+      ) : (
+        <div className="searchResultGrid">
+          <div>
+            <h3>作品</h3>
+            {workResults.length === 0 ? (
+              <p className="mutedText">暂无匹配作品</p>
+            ) : (
+              <div className="compactWorkList">
+                {workResults.map((work, index) => (
+                  <WorkCard
+                    index={index}
+                    key={work.id}
+                    onLike={() => onLike(work.id)}
+                    onVote={() => onVote(work.id)}
+                    work={work}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+          <div>
+            <h3>同学</h3>
+            {profileResults.length === 0 ? (
+              <p className="mutedText">暂无匹配同学</p>
+            ) : (
+              <div className="profileSearchList">
+                {profileResults.map((profile) => (
+                  <article className="profileSearchCard" key={profile.username}>
+                    {profile.avatar ? (
+                      <img src={profile.avatar} alt={profile.name} />
+                    ) : (
+                      <span className="avatar">{(profile.name || "新").slice(0, 1)}</span>
+                    )}
+                    <div>
+                      <h4>{profile.name}</h4>
+                      <p>{profile.school || "未填写学校"} · {profile.gender_label || "未填写"} · {profile.zodiac || "未填写星座"}</p>
+                      <small>{profile.mbti || "MBTI 未填写"}</small>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function WorkCard({ work, index, onLike, onVote }) {
-  const image = work.image || work.image_url;
+  const image = getWorkImage(work);
+  const attachment = work.attachment;
   const tone = fallbackTones[index % fallbackTones.length];
 
   return (
     <article className={`workCard card${index}`}>
-      {image ? (
+      {work.media_type === "video" && attachment ? (
+        <video className="workImage" controls src={attachment} />
+      ) : image ? (
         <img className="workImage" src={image} alt={work.title} />
       ) : (
         <div className={`workImage generated ${tone}`}>
-          <span>{workTypeLabel(work)}</span>
+          <span>{mediaTypeLabel(work)}</span>
           <strong>{work.title}</strong>
         </div>
       )}
@@ -421,6 +537,11 @@ function WorkCard({ work, index, onLike, onVote }) {
         {work.link && (
           <a className="workLink" href={work.link} rel="noreferrer" target="_blank">
             查看作品链接
+          </a>
+        )}
+        {attachment && (
+          <a className="workLink" href={attachment} rel="noreferrer" target="_blank">
+            打开{mediaTypeLabel(work)}
           </a>
         )}
         <div className="actionRow">
@@ -477,8 +598,10 @@ function CourseView() {
 }
 
 function PublishView() {
-  const initialForm = { title: "", work_type: "ai", link: "", image_url: "", description: "" };
+  const initialForm = { title: "", work_type: "ai", link: "", image_url: "", asset: null, description: "" };
   const [form, setForm] = useState(initialForm);
+  const [fileInputKey, setFileInputKey] = useState(0);
+  const [uploadProgress, setUploadProgress] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -490,8 +613,11 @@ function PublishView() {
     setError("");
 
     try {
-      await api.createWork(form);
+      const uploadId = form.asset ? await uploadWorkAsset(form.asset, setUploadProgress) : null;
+      await api.createWork(buildWorkFormData(form, uploadId));
       setForm(initialForm);
+      setFileInputKey((current) => current + 1);
+      setUploadProgress(null);
       setMessage("作品已提交审核，通过后会进入展示墙。");
     } catch (publishError) {
       setError(publishError.message || "提交失败，请检查内容");
@@ -541,10 +667,20 @@ function PublishView() {
           图片链接
           <input
             onChange={(event) => updateField("image_url", event.target.value)}
-            placeholder="https://...（可选）"
+            placeholder="https://...（可选，和上传文件二选一即可）"
             type="url"
             value={form.image_url}
           />
+        </label>
+        <label>
+          上传文件
+          <input
+            accept={WORK_FILE_ACCEPT}
+            key={fileInputKey}
+            onChange={(event) => updateField("asset", event.target.files?.[0] ?? null)}
+            type="file"
+          />
+          <small>支持图片、PDF、MP4、WebM、MOV，最大 500MB，提交时自动切片上传。</small>
         </label>
         <label>
           作品介绍
@@ -558,6 +694,9 @@ function PublishView() {
         </label>
         {error && <p className="errorText">{error}</p>}
         {message && <p className="successText">{message}</p>}
+        {uploadProgress && (
+          <p className="uploadProgress">正在上传：{uploadProgress.current}/{uploadProgress.total} 片，{uploadProgress.percent}%</p>
+        )}
         <button disabled={submitting} type="submit">
           {submitting ? "提交中..." : "提交审核"}
         </button>
@@ -641,7 +780,13 @@ function ReviewView() {
 function ProfileView({ profile, onProfileSaved }) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(profile);
+  const [avatarFile, setAvatarFile] = useState(null);
   const [myWorks, setMyWorks] = useState([]);
+  const [editingWorkId, setEditingWorkId] = useState(null);
+  const [workDraft, setWorkDraft] = useState(null);
+  const [workFileInputKey, setWorkFileInputKey] = useState(0);
+  const [workUploadProgress, setWorkUploadProgress] = useState(null);
+  const [resubmitting, setResubmitting] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -649,20 +794,21 @@ function ProfileView({ profile, onProfileSaved }) {
     setDraft(profile);
   }, [profile]);
 
-  useEffect(() => {
-    async function loadMyWorks() {
-      try {
-        setMyWorks(await api.myWorks());
-      } catch {
-        setMyWorks([]);
-      }
+  async function loadMyWorks() {
+    try {
+      setMyWorks(await api.myWorks());
+    } catch {
+      setMyWorks([]);
     }
+  }
 
+  useEffect(() => {
     loadMyWorks();
   }, []);
 
   function startEditing() {
     setDraft(profile);
+    setAvatarFile(null);
     setMessage("");
     setError("");
     setIsEditing(true);
@@ -674,20 +820,65 @@ function ProfileView({ profile, onProfileSaved }) {
     setError("");
 
     try {
-      const saved = await api.updateMe({
+      const profilePayload = buildProfileFormData({
         name: draft.name,
         school: draft.school,
         gender: draft.gender,
         zodiac: draft.zodiac,
         mbti: draft.mbti,
         bio: draft.bio,
+        avatar: avatarFile,
       });
+      const saved = await api.updateMe(profilePayload);
       onProfileSaved(saved);
       setIsEditing(false);
       setMessage("个人资料已保存。");
     } catch (profileError) {
       setError(profileError.message || "资料保存失败");
     }
+  }
+
+  function startWorkEditing(work) {
+    setEditingWorkId(work.id);
+    setWorkDraft({
+      title: work.title,
+      work_type: work.work_type,
+      link: work.link || "",
+      image_url: work.image_url || "",
+      asset: null,
+      description: work.description,
+    });
+    setMessage("");
+    setError("");
+  }
+
+  async function resubmitWork(event) {
+    event.preventDefault();
+    if (!editingWorkId || !workDraft) {
+      return;
+    }
+
+    setResubmitting(true);
+    setMessage("");
+    setError("");
+    try {
+      const uploadId = workDraft.asset ? await uploadWorkAsset(workDraft.asset, setWorkUploadProgress) : null;
+      await api.updateWork(editingWorkId, buildWorkFormData(workDraft, uploadId));
+      await loadMyWorks();
+      setEditingWorkId(null);
+      setWorkDraft(null);
+      setWorkFileInputKey((current) => current + 1);
+      setWorkUploadProgress(null);
+      setMessage("作品已重新提交审核。");
+    } catch (workError) {
+      setError(workError.message || "重新提交失败");
+    } finally {
+      setResubmitting(false);
+    }
+  }
+
+  function updateWorkDraft(field, value) {
+    setWorkDraft((current) => ({ ...current, [field]: value }));
   }
 
   const heat = myWorks.reduce((sum, work) => sum + scoreWork(work), 0);
@@ -778,6 +969,10 @@ function ProfileView({ profile, onProfileSaved }) {
               个人简介
               <textarea value={draft.bio || ""} rows="4" onChange={(event) => setDraft({ ...draft, bio: event.target.value })} />
             </label>
+            <label>
+              头像
+              <input accept="image/*" onChange={(event) => setAvatarFile(event.target.files?.[0] ?? null)} type="file" />
+            </label>
           </div>
           {error && <p className="errorText">{error}</p>}
           <div className="editActions">
@@ -803,19 +998,84 @@ function ProfileView({ profile, onProfileSaved }) {
           <div className="profileWorkGrid">
             {myWorks.map((work, index) => (
               <article className="profileWorkCard" key={work.id}>
-                {work.image || work.image_url ? (
-                  <img src={work.image || work.image_url} alt={work.title} />
+                {getWorkImage(work) ? (
+                  <img src={getWorkImage(work)} alt={work.title} />
                 ) : (
                   <div className={`profileWorkPoster ${fallbackTones[index % fallbackTones.length]}`}>
-                    <span>{workTypeLabel(work)}</span>
+                    <span>{mediaTypeLabel(work)}</span>
                   </div>
                 )}
                 <h4>{work.title}</h4>
                 <p>{work.like_count ?? 0} 喜欢 · {work.vote_count ?? 0} 票</p>
-                <strong>{work.status_label}</strong>
+                <strong className={work.status}>{work.status_label}</strong>
+                {work.status === "rejected" && (
+                  <div className="rejectInfo">
+                    <span>打回原因：{work.reject_reason || "请补充作品信息后重新提交。"}</span>
+                    <button onClick={() => startWorkEditing(work)} type="button">修改后重新提交</button>
+                  </div>
+                )}
               </article>
             ))}
           </div>
+        )}
+        {editingWorkId && workDraft && (
+          <form className="resubmitPanel" onSubmit={resubmitWork}>
+            <div className="panelTitle">
+              <span>重新提交</span>
+              <h2>修改被打回的作品</h2>
+              <p>保存后作品会重新进入待审核状态，审核通过前不会出现在公共作品流里。</p>
+            </div>
+            <div className="profileGrid">
+              <label>
+                作品标题
+                <input required value={workDraft.title} onChange={(event) => updateWorkDraft("title", event.target.value)} />
+              </label>
+              <label>
+                作品类型
+                <select value={workDraft.work_type} onChange={(event) => updateWorkDraft("work_type", event.target.value)}>
+                  <option value="training">培训作品</option>
+                  <option value="ai">AI 作品</option>
+                </select>
+              </label>
+              <label>
+                作品链接
+                <input type="url" value={workDraft.link} onChange={(event) => updateWorkDraft("link", event.target.value)} />
+              </label>
+              <label>
+                图片链接
+                <input type="url" value={workDraft.image_url} onChange={(event) => updateWorkDraft("image_url", event.target.value)} />
+              </label>
+              <label>
+                重新上传文件
+                <input
+                  accept={WORK_FILE_ACCEPT}
+                  key={workFileInputKey}
+                  onChange={(event) => updateWorkDraft("asset", event.target.files?.[0] ?? null)}
+                  type="file"
+                />
+                <small>支持图片、PDF、MP4、WebM、MOV，最大 500MB。</small>
+              </label>
+              <label>
+                作品介绍
+                <textarea
+                  required
+                  rows="4"
+                  value={workDraft.description}
+                  onChange={(event) => updateWorkDraft("description", event.target.value)}
+                />
+              </label>
+            </div>
+            {error && <p className="errorText">{error}</p>}
+            {workUploadProgress && (
+              <p className="uploadProgress">
+                正在上传：{workUploadProgress.current}/{workUploadProgress.total} 片，{workUploadProgress.percent}%
+              </p>
+            )}
+            <div className="editActions">
+              <button disabled={resubmitting} type="submit">{resubmitting ? "提交中..." : "重新提交审核"}</button>
+              <button onClick={() => setEditingWorkId(null)} type="button">取消</button>
+            </div>
+          </form>
         )}
       </div>
     </section>
@@ -912,12 +1172,92 @@ function workTypeLabel(work) {
   return work.work_type_label || (work.work_type === "ai" ? "AI 作品" : "培训作品");
 }
 
+function mediaTypeLabel(work) {
+  return work.media_type_label || ({ image: "图片", pdf: "PDF", video: "视频", link: "链接" }[work.media_type] ?? "作品文件");
+}
+
+function getWorkImage(work) {
+  if (work.media_type === "image" && work.attachment) {
+    return work.attachment;
+  }
+  return work.image || work.image_url || "";
+}
+
 function genderLabel(value) {
   return genderOptions.find((option) => option.value === value)?.label ?? "未填写";
 }
 
 function scoreWork(work) {
   return (work.like_count ?? 0) + (work.vote_count ?? 0);
+}
+
+async function uploadWorkAsset(file, onProgress) {
+  if (file.size > MAX_WORK_UPLOAD_BYTES) {
+    throw new Error("文件不能超过 500MB");
+  }
+
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE) || 1;
+  const upload = await api.initUpload({
+    file_name: file.name,
+    content_type: file.type || guessContentType(file.name),
+    total_size: file.size,
+    total_chunks: totalChunks,
+  });
+
+  for (let index = 0; index < totalChunks; index += 1) {
+    const chunk = file.slice(index * CHUNK_SIZE, Math.min(file.size, (index + 1) * CHUNK_SIZE));
+    const formData = new FormData();
+    formData.append("index", String(index));
+    formData.append("chunk", chunk, `${file.name}.part${index}`);
+    await api.uploadChunk(upload.upload_id, formData);
+    onProgress?.({
+      current: index + 1,
+      total: totalChunks,
+      percent: Math.round(((index + 1) / totalChunks) * 100),
+    });
+  }
+
+  const completed = await api.completeUpload(upload.upload_id);
+  return completed.upload_id;
+}
+
+function guessContentType(fileName) {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".mp4")) return "video/mp4";
+  if (lower.endsWith(".webm")) return "video/webm";
+  if (lower.endsWith(".mov")) return "video/quicktime";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".webp")) return "image/webp";
+  return "image/jpeg";
+}
+
+function buildWorkFormData(work, uploadId = null) {
+  const formData = new FormData();
+  formData.append("title", work.title);
+  formData.append("work_type", work.work_type);
+  formData.append("link", work.link || "");
+  formData.append("image_url", work.image_url || "");
+  formData.append("description", work.description);
+  if (uploadId) {
+    formData.append("upload_id", uploadId);
+  }
+  return formData;
+}
+
+function buildProfileFormData(profile) {
+  const formData = new FormData();
+  formData.append("name", profile.name || "");
+  formData.append("school", profile.school || "");
+  formData.append("gender", profile.gender || "unknown");
+  formData.append("zodiac", profile.zodiac || "");
+  formData.append("mbti", profile.mbti || "");
+  formData.append("bio", profile.bio || "");
+  if (profile.avatar instanceof File) {
+    formData.append("avatar", profile.avatar);
+  }
+  return formData;
 }
 
 export default App;

@@ -125,6 +125,10 @@ STATIC_URL = 'static/'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+WORK_MAX_UPLOAD_SIZE = int(os.environ.get('WORK_MAX_UPLOAD_SIZE', 500 * 1024 * 1024))
+WORK_UPLOAD_CHUNK_DIR = MEDIA_ROOT / 'upload_chunks'
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('DATA_UPLOAD_MAX_MEMORY_SIZE', 20 * 1024 * 1024))
+FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('FILE_UPLOAD_MAX_MEMORY_SIZE', 10 * 1024 * 1024))
 
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',

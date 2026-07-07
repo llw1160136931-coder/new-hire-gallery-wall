@@ -2,7 +2,17 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView, TokenVerifyView
 
-from .views import CourseViewSet, LeaderboardView, MeView, RegisterView, WorkViewSet
+from .views import (
+    CourseViewSet,
+    LeaderboardView,
+    MeView,
+    RegisterView,
+    SearchView,
+    UploadChunkView,
+    UploadCompleteView,
+    UploadInitView,
+    WorkViewSet,
+)
 
 router = DefaultRouter()
 router.register('courses', CourseViewSet, basename='course')
@@ -15,5 +25,9 @@ urlpatterns = [
     path('auth/token/verify/', TokenVerifyView.as_view(), name='token_verify'),
     path('me/', MeView.as_view(), name='me'),
     path('leaderboard/', LeaderboardView.as_view(), name='leaderboard'),
+    path('search/', SearchView.as_view(), name='search'),
+    path('uploads/init/', UploadInitView.as_view(), name='upload-init'),
+    path('uploads/<uuid:upload_id>/chunk/', UploadChunkView.as_view(), name='upload-chunk'),
+    path('uploads/<uuid:upload_id>/complete/', UploadCompleteView.as_view(), name='upload-complete'),
     path('', include(router.urls)),
 ]

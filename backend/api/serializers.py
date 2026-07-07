@@ -1,8 +1,25 @@
 from django.contrib.auth.models import User
+from django.conf import settings
 from django.db.models import Count
 from rest_framework import serializers
 
-from .models import Course, Like, Profile, Vote, Work
+from .models import ChunkedUpload, Course, Like, Profile, Vote, Work
+
+
+ALLOWED_ATTACHMENT_TYPES = {
+    'application/pdf': Work.MediaType.PDF,
+    'video/mp4': Work.MediaType.VIDEO,
+    'video/webm': Work.MediaType.VIDEO,
+    'video/quicktime': Work.MediaType.VIDEO,
+    'image/jpeg': Work.MediaType.IMAGE,
+    'image/png': Work.MediaType.IMAGE,
+    'image/gif': Work.MediaType.IMAGE,
+    'image/webp': Work.MediaType.IMAGE,
+}
+
+
+def media_type_from_content_type(content_type):
+    return ALLOWED_ATTACHMENT_TYPES.get(content_type)
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -27,6 +44,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 class ProfileSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
+    gender_label = serializers.CharField(source='get_gender_display', read_only=True)
 
     class Meta:
         model = Profile
@@ -39,6 +57,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             'mbti',
             'zodiac',
             'gender',
+            'gender_label',
             'bio',
             'created_at',
             'updated_at',
@@ -69,9 +88,11 @@ class WorkSerializer(serializers.ModelSerializer):
     author_name = serializers.CharField(source='author.profile.name', read_only=True)
     author_avatar = serializers.ImageField(source='author.profile.avatar', read_only=True)
     work_type_label = serializers.CharField(source='get_work_type_display', read_only=True)
+    media_type_label = serializers.CharField(source='get_media_type_display', read_only=True)
     status_label = serializers.CharField(source='get_status_display', read_only=True)
     like_count = serializers.IntegerField(read_only=True)
     vote_count = serializers.IntegerField(read_only=True)
+    upload_id = serializers.UUIDField(write_only=True, required=False)
 
     class Meta:
         model = Work
@@ -85,6 +106,13 @@ class WorkSerializer(serializers.ModelSerializer):
             'work_type_label',
             'image',
             'image_url',
+            'attachment',
+            'media_type',
+            'media_type_label',
+            'original_filename',
+            'content_type',
+            'file_size',
+            'upload_id',
             'link',
             'description',
             'status',
@@ -103,9 +131,77 @@ class WorkSerializer(serializers.ModelSerializer):
             'reject_reason',
             'reviewed_by',
             'reviewed_at',
+            'media_type',
+            'original_filename',
+            'content_type',
+            'file_size',
             'created_at',
             'updated_at',
         ]
+
+    def validate(self, attrs):
+        upload_id = attrs.get('upload_id')
+        attachment = attrs.get('attachment')
+        image = attrs.get('image')
+
+        if upload_id:
+            request = self.context.get('request')
+            upload = ChunkedUpload.objects.filter(
+                upload_id=upload_id,
+                owner=request.user,
+                status=ChunkedUpload.Status.COMPLETED,
+            ).first()
+            if not upload:
+                raise serializers.ValidationError({'upload_id': '上传文件不存在或尚未合并完成'})
+            self.context['chunked_upload'] = upload
+
+        for uploaded_file in [attachment, image]:
+            if not uploaded_file:
+                continue
+            if uploaded_file.size > settings.WORK_MAX_UPLOAD_SIZE:
+                raise serializers.ValidationError({'attachment': '文件不能超过 500MB'})
+            content_type = getattr(uploaded_file, 'content_type', '')
+            if not media_type_from_content_type(content_type):
+                raise serializers.ValidationError({'attachment': '仅支持图片、PDF、MP4、WebM 和 MOV 视频'})
+
+        return attrs
+
+    def create(self, validated_data):
+        validated_data.pop('upload_id', None)
+        chunked_upload = self.context.get('chunked_upload')
+        instance = super().create(validated_data)
+        self.apply_attachment_metadata(instance, chunked_upload)
+        return instance
+
+    def update(self, instance, validated_data):
+        validated_data.pop('upload_id', None)
+        chunked_upload = self.context.get('chunked_upload')
+        instance = super().update(instance, validated_data)
+        self.apply_attachment_metadata(instance, chunked_upload)
+        return instance
+
+    def apply_attachment_metadata(self, instance, chunked_upload=None):
+        if chunked_upload:
+            instance.attachment = chunked_upload.file
+            instance.media_type = chunked_upload.media_type
+            instance.original_filename = chunked_upload.file_name
+            instance.content_type = chunked_upload.content_type
+            instance.file_size = chunked_upload.total_size
+            instance.save(update_fields=['attachment', 'media_type', 'original_filename', 'content_type', 'file_size'])
+            return
+
+        uploaded_file = instance.attachment or instance.image
+        if uploaded_file:
+            content_type = getattr(uploaded_file.file, 'content_type', '') or instance.content_type
+            media_type = media_type_from_content_type(content_type) or instance.media_type
+            instance.media_type = media_type
+            instance.original_filename = instance.original_filename or uploaded_file.name.split('/')[-1]
+            instance.content_type = content_type
+            instance.file_size = getattr(uploaded_file, 'size', 0) or instance.file_size
+            instance.save(update_fields=['media_type', 'original_filename', 'content_type', 'file_size'])
+        elif instance.image_url or instance.link:
+            instance.media_type = Work.MediaType.LINK
+            instance.save(update_fields=['media_type'])
 
     @staticmethod
     def setup_eager_loading(queryset):
@@ -128,3 +224,12 @@ class LeaderboardSerializer(serializers.ModelSerializer):
     class Meta:
         model = Work
         fields = ['id', 'title', 'work_type', 'author_name', 'like_count', 'vote_count', 'score']
+
+
+class PublicProfileSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='user.username', read_only=True)
+    gender_label = serializers.CharField(source='get_gender_display', read_only=True)
+
+    class Meta:
+        model = Profile
+        fields = ['username', 'name', 'avatar', 'school', 'mbti', 'zodiac', 'gender', 'gender_label', 'bio']

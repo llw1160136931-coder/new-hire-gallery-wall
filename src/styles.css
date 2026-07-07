@@ -387,6 +387,127 @@ button {
   letter-spacing: 0.08em;
 }
 
+.searchBox {
+  min-width: 0;
+  border-radius: 999px;
+  padding: 4px;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: 0 8px 20px rgba(22, 23, 29, 0.06);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px;
+}
+
+.searchBox input {
+  min-width: 0;
+  border: 0;
+  border-radius: 999px;
+  padding: 9px 12px;
+  background: transparent;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.searchBox button {
+  width: auto;
+  padding: 8px 13px;
+  background: var(--ink);
+  color: #fff;
+  text-align: center;
+  letter-spacing: 0;
+  box-shadow: none;
+}
+
+.searchResultsPanel {
+  margin-bottom: 22px;
+  padding: 22px;
+  border: 1px solid rgba(232, 228, 220, 0.86);
+  border-radius: 30px;
+  background: rgba(255, 254, 250, 0.9);
+  box-shadow: var(--shadow);
+}
+
+.searchResultsHead {
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+}
+
+.searchResultsHead span {
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.searchResultsHead h2 {
+  margin: 5px 0 0;
+  font-size: clamp(24px, 3vw, 36px);
+}
+
+.searchResultsHead button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 10px 14px;
+  background: #fff;
+  font-weight: 900;
+}
+
+.searchResultGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(220px, 0.75fr);
+  gap: 18px;
+}
+
+.searchResultGrid h3 {
+  margin: 0 0 12px;
+}
+
+.compactWorkList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.compactWorkList .workCard {
+  margin: 0;
+}
+
+.profileSearchList {
+  display: grid;
+  gap: 10px;
+}
+
+.profileSearchCard {
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 12px;
+  background: #fff;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.profileSearchCard img {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.profileSearchCard h4,
+.profileSearchCard p {
+  margin: 0;
+}
+
+.profileSearchCard p,
+.profileSearchCard small,
+.mutedText {
+  color: var(--muted);
+}
+
 .schedulePanel {
   margin-bottom: 22px;
   padding: clamp(24px, 3vw, 34px);
@@ -895,6 +1016,13 @@ label {
   font-weight: 900;
 }
 
+label small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
 input,
 select,
 textarea {
@@ -917,7 +1045,8 @@ textarea,
 }
 
 .publishForm .errorText,
-.publishForm .successText {
+.publishForm .successText,
+.publishForm .uploadProgress {
   grid-column: 1 / -1;
 }
 
@@ -1083,6 +1212,14 @@ textarea,
   background: rgba(255, 255, 255, 0.76);
 }
 
+.resubmitPanel {
+  margin-top: 18px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
 .profileEditPanel .panelTitle {
   margin-bottom: 16px;
 }
@@ -1191,6 +1328,45 @@ textarea,
   font-size: 12px;
 }
 
+.profileWorkCard > strong.pending {
+  background: rgba(75, 115, 255, 0.88);
+}
+
+.profileWorkCard > strong.rejected {
+  background: rgba(255, 36, 66, 0.88);
+}
+
+.profileWorkCard > strong.approved {
+  background: rgba(18, 131, 108, 0.88);
+}
+
+.rejectInfo {
+  margin: 0 12px 12px;
+  border-radius: 16px;
+  padding: 10px;
+  background: #fff0f3;
+  display: grid;
+  gap: 8px;
+}
+
+.rejectInfo span {
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.5;
+}
+
+.rejectInfo button {
+  width: max-content;
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 10px;
+  background: var(--red);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .rightRail {
   position: sticky;
   top: 0;
@@ -1293,6 +1469,15 @@ textarea,
 .successText {
   background: #effaf8;
   color: #12836c;
+}
+
+.uploadProgress {
+  margin: 0;
+  border-radius: 18px;
+  padding: 12px 14px;
+  background: #eef3ff;
+  color: var(--blue);
+  font-weight: 900;
 }
 
 button:disabled {
@@ -1448,6 +1633,33 @@ button:disabled {
     white-space: nowrap;
   }
 
+  .searchBox {
+    min-width: 0;
+  }
+
+  .searchBox button {
+    padding-inline: 10px;
+  }
+
+  .searchResultsPanel {
+    border-radius: 24px;
+    padding: 16px;
+  }
+
+  .searchResultsHead,
+  .searchResultGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .searchResultsHead {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .compactWorkList {
+    grid-template-columns: 1fr;
+  }
+
   .schedulePanel {
     border-radius: 26px;
     padding: 16px;
@@ -1531,6 +1743,7 @@ button:disabled {
   }
 
   .profileEditPanel,
+  .resubmitPanel,
   .profileWorks {
     margin-left: 16px;
     margin-right: 16px;
@@ -1538,7 +1751,8 @@ button:disabled {
     padding-right: 0;
   }
 
-  .profileEditPanel {
+  .profileEditPanel,
+  .resubmitPanel {
     padding: 16px;
   }
 

@@ -1,3 +1,5 @@
+import uuid
+
 from django.conf import settings
 from django.db import models
 
@@ -61,11 +63,22 @@ class Work(models.Model):
         APPROVED = 'approved', '已发布'
         REJECTED = 'rejected', '已打回'
 
+    class MediaType(models.TextChoices):
+        IMAGE = 'image', '图片'
+        PDF = 'pdf', 'PDF'
+        VIDEO = 'video', '视频'
+        LINK = 'link', '链接'
+
     author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='works')
     title = models.CharField(max_length=120)
     work_type = models.CharField(max_length=20, choices=WorkType.choices)
     image = models.ImageField(upload_to='works/', blank=True, null=True)
     image_url = models.URLField(blank=True)
+    attachment = models.FileField(upload_to='works/files/', blank=True, null=True)
+    media_type = models.CharField(max_length=20, choices=MediaType.choices, default=MediaType.IMAGE)
+    original_filename = models.CharField(max_length=255, blank=True)
+    content_type = models.CharField(max_length=120, blank=True)
+    file_size = models.PositiveBigIntegerField(default=0)
     link = models.URLField(blank=True)
     description = models.TextField()
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
@@ -86,6 +99,31 @@ class Work(models.Model):
 
     def __str__(self):
         return self.title
+
+
+class ChunkedUpload(models.Model):
+    class Status(models.TextChoices):
+        UPLOADING = 'uploading', '上传中'
+        COMPLETED = 'completed', '已完成'
+
+    upload_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='chunked_uploads')
+    file_name = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=120)
+    media_type = models.CharField(max_length=20, choices=Work.MediaType.choices)
+    total_size = models.PositiveBigIntegerField()
+    total_chunks = models.PositiveIntegerField()
+    uploaded_chunks = models.JSONField(default=list)
+    file = models.FileField(upload_to='works/files/', blank=True, null=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.UPLOADING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.file_name} ({self.status})'
 
 
 class Like(models.Model):
