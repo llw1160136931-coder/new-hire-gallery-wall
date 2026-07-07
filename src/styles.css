@@ -565,12 +565,23 @@ button {
   color: var(--text);
   display: grid;
   gap: 3px;
+  transition:
+    background 0.22s ease,
+    border-color 0.22s ease,
+    color 0.22s ease,
+    transform 0.16s ease,
+    box-shadow 0.22s ease;
+}
+
+.dateTabs button:active {
+  transform: scale(0.97);
 }
 
 .dateTabs button.active {
   border-color: var(--ink);
   background: var(--ink);
   color: #fff;
+  box-shadow: 0 10px 24px rgba(17, 18, 23, 0.16);
 }
 
 .dateTabs strong,
@@ -590,6 +601,31 @@ button {
   border: 1px solid var(--line);
   border-radius: 26px;
   background: #fff;
+  transition: opacity 0.24s ease;
+}
+
+.scheduleTable.isUpdating {
+  opacity: 0.62;
+}
+
+.scheduleBody.isFresh {
+  animation: scheduleFadeIn 0.28s ease;
+}
+
+.scheduleError {
+  margin: 0 0 12px;
+}
+
+@keyframes scheduleFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .scheduleRow {

@@ -244,20 +244,21 @@ function FeedView({ role }) {
   const [leaderboard, setLeaderboard] = useState([]);
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [coursesLoading, setCoursesLoading] = useState(true);
   const [error, setError] = useState("");
+  const [coursesError, setCoursesError] = useState("");
+  const [scheduleEpoch, setScheduleEpoch] = useState(0);
 
-  async function loadFeed() {
+  async function loadWorks() {
     setLoading(true);
     setError("");
     try {
-      const [nextWorks, nextLeaderboard, nextCourses] = await Promise.all([
+      const [nextWorks, nextLeaderboard] = await Promise.all([
         api.works(filter),
         api.leaderboard(),
-        api.courses(selectedDate),
       ]);
       setWorks(nextWorks);
       setLeaderboard(nextLeaderboard);
-      setCourses(nextCourses);
     } catch (feedError) {
       setError(feedError.message || "作品流加载失败");
     } finally {
@@ -265,9 +266,31 @@ function FeedView({ role }) {
     }
   }
 
+  async function loadCourses(date = selectedDate) {
+    setCoursesLoading(true);
+    setCoursesError("");
+    try {
+      setCourses(await api.courses(date));
+    } catch (courseError) {
+      setCoursesError(courseError.message || "课程加载失败");
+    } finally {
+      setCoursesLoading(false);
+    }
+  }
+
   useEffect(() => {
-    loadFeed();
-  }, [filter, selectedDate]);
+    loadWorks();
+  }, [filter]);
+
+  useEffect(() => {
+    loadCourses(selectedDate);
+  }, [selectedDate]);
+
+  useEffect(() => {
+    if (!coursesLoading) {
+      setScheduleEpoch((epoch) => epoch + 1);
+    }
+  }, [coursesLoading, courses]);
 
   const rankedWorks = leaderboard.length
     ? leaderboard
@@ -276,12 +299,12 @@ function FeedView({ role }) {
 
   async function likeWork(id) {
     await api.likeWork(id);
-    await loadFeed();
+    await loadWorks();
   }
 
   async function voteWork(id) {
     await api.voteWork(id);
-    await loadFeed();
+    await loadWorks();
   }
 
   async function submitSearch(event) {
@@ -345,6 +368,7 @@ function FeedView({ role }) {
         <div className="dateTabs" aria-label="课程日期">
           {trainingDates.map((day) => (
             <button
+              aria-pressed={selectedDate === day.value}
               className={selectedDate === day.value ? "active" : ""}
               key={day.value}
               onClick={() => setSelectedDate(day.value)}
@@ -355,30 +379,38 @@ function FeedView({ role }) {
             </button>
           ))}
         </div>
-        <div className="scheduleTable" role="table" aria-label={`${formatDate(selectedDate)} 课程表`}>
+        {coursesError && <p className="errorText scheduleError">{coursesError}</p>}
+        <div
+          className={`scheduleTable ${coursesLoading ? "isUpdating" : ""}`}
+          role="table"
+          aria-busy={coursesLoading}
+          aria-label={`${formatDate(selectedDate)} 课程表`}
+        >
           <div className="scheduleRow scheduleHeader" role="row">
             <span>时间</span>
             <span>课程</span>
             <span>讲师 / 地点</span>
             <span>状态</span>
           </div>
-          {courses.length === 0 ? (
-            <div className="scheduleRow emptySchedule" role="row">
-              <span>{formatDate(selectedDate)}</span>
-              <strong>当天暂无课程</strong>
-              <span>可以切换其他日期查看安排</span>
-              <em>空</em>
-            </div>
-          ) : (
-            courses.map((course) => (
-              <div className="scheduleRow" key={course.id} role="row">
-                <span>{formatCourseTime(course)}</span>
-                <strong>{course.title}</strong>
-                <span>{course.teacher} · {course.room}</span>
-                <em className={course.status}>{course.status_label}</em>
+          <div className="scheduleBody isFresh" key={scheduleEpoch}>
+            {courses.length === 0 && !coursesLoading ? (
+              <div className="scheduleRow emptySchedule" role="row">
+                <span>{formatDate(selectedDate)}</span>
+                <strong>当天暂无课程</strong>
+                <span>可以切换其他日期查看安排</span>
+                <em>空</em>
               </div>
-            ))
-          )}
+            ) : (
+              courses.map((course) => (
+                <div className="scheduleRow" key={course.id} role="row">
+                  <span>{formatCourseTime(course)}</span>
+                  <strong>{course.title}</strong>
+                  <span>{course.teacher} · {course.room}</span>
+                  <em className={course.status}>{course.status_label}</em>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       </div>
 
