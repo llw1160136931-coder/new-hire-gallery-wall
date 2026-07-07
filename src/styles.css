@@ -110,6 +110,38 @@ button {
   flex-wrap: wrap;
 }
 
+.loginForm {
+  margin-top: 28px;
+  display: grid;
+  gap: 14px;
+}
+
+.loginForm button {
+  width: max-content;
+  border: 0;
+  border-radius: 999px;
+  padding: 13px 20px;
+  background: var(--ink);
+  color: #fff;
+  font-weight: 900;
+}
+
+.demoAccounts {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.demoAccounts button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 10px 14px;
+  background: #fff;
+  color: var(--text);
+  font-weight: 900;
+}
+
 .loginActions button,
 .quietButton,
 .filterRow button,
@@ -315,7 +347,7 @@ button {
   flex-wrap: wrap;
 }
 
-.filterRow button:first-child {
+.filterRow button.active {
   background: var(--red);
   border-color: var(--red);
   color: #fff;
@@ -497,6 +529,25 @@ button {
 .scheduleRow em.未开始 {
   background: #eef3ff;
   color: var(--blue);
+}
+
+.scheduleRow em.live {
+  background: #e7fff6;
+  color: #10835f;
+}
+
+.scheduleRow em.upcoming {
+  background: #eef3ff;
+  color: var(--blue);
+}
+
+.scheduleRow em.done {
+  background: #f1eee7;
+  color: var(--muted);
+}
+
+.emptySchedule {
+  opacity: 0.78;
 }
 
 .rankingPanel {
@@ -740,6 +791,15 @@ button {
   color: #fff;
 }
 
+.workLink {
+  display: inline-block;
+  margin-top: 12px;
+  color: var(--red);
+  font-size: 13px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
 .profileScene {
   overflow: hidden;
   padding: 0;
@@ -788,6 +848,21 @@ button {
 .courseCard.未开始 > span {
   background: #eef3ff;
   color: var(--blue);
+}
+
+.courseCard.live > span {
+  background: #e7fff6;
+  color: #10835f;
+}
+
+.courseCard.upcoming > span {
+  background: #eef3ff;
+  color: var(--blue);
+}
+
+.courseCard.done > span {
+  background: #f1eee7;
+  color: var(--muted);
 }
 
 .courseCard h3 {
@@ -839,6 +914,11 @@ textarea,
 .publishForm button {
   margin-top: 4px;
   padding: 15px 20px;
+}
+
+.publishForm .errorText,
+.publishForm .successText {
+  grid-column: 1 / -1;
 }
 
 .reviewList {
@@ -919,6 +999,10 @@ textarea,
   height: 112px;
   border: 5px solid var(--paper);
   box-shadow: 0 12px 30px rgba(22, 23, 29, 0.14);
+}
+
+.profileAvatarImage {
+  object-fit: cover;
 }
 
 .profileAvatarBlock button,
@@ -1168,6 +1252,52 @@ textarea,
   margin: 8px 0 0;
   font-size: 72px;
   line-height: 0.9;
+}
+
+.loadingCard,
+.emptyState {
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  padding: 20px;
+  background: rgba(255, 254, 250, 0.82);
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.emptyState strong {
+  display: block;
+  color: var(--text);
+  font-size: 18px;
+}
+
+.emptyState p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.errorText,
+.successText {
+  margin: 0;
+  border-radius: 18px;
+  padding: 12px 14px;
+  font-weight: 900;
+  line-height: 1.5;
+}
+
+.errorText {
+  background: #fff0f3;
+  color: var(--red);
+}
+
+.successText {
+  background: #effaf8;
+  color: #12836c;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
 }
 
 @media (max-width: 1180px) {
