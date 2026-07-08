@@ -3266,6 +3266,41 @@ button:disabled {
     padding: 18px 18px 76px;
   }
 
+  .creatorScene {
+    padding: 18px;
+  }
+
+  .creatorHero {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 18px;
+  }
+
+  .creatorHero .panelTitle {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .creatorHero .panelTitle span,
+  .creatorHero .panelTitle h2,
+  .creatorHero .panelTitle p {
+    max-width: none;
+    overflow-wrap: break-word;
+    word-break: normal;
+    writing-mode: horizontal-tb;
+  }
+
+  .creatorHero .panelTitle h2 {
+    font-size: clamp(30px, 9vw, 42px);
+    line-height: 1.08;
+  }
+
+  .creatorHero img {
+    width: min(190px, 58vw);
+    max-height: 170px;
+    justify-self: center;
+  }
+
   .rankList {
     grid-template-columns: 1fr;
     padding-right: 0;
