@@ -38,8 +38,10 @@ class Course(models.Model):
         UPCOMING = 'upcoming', '未开始'
 
     title = models.CharField(max_length=120)
+    topic = models.CharField(max_length=120, blank=True)
     teacher = models.CharField(max_length=80)
     room = models.CharField(max_length=80)
+    content = models.TextField(blank=True)
     date = models.DateField()
     start_time = models.TimeField()
     end_time = models.TimeField()

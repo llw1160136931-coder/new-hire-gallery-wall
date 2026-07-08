@@ -12,9 +12,9 @@ class ProfileAdmin(admin.ModelAdmin):
 
 @admin.register(Course)
 class CourseAdmin(admin.ModelAdmin):
-    list_display = ['date', 'start_time', 'end_time', 'title', 'teacher', 'room', 'status']
-    list_filter = ['date', 'status']
-    search_fields = ['title', 'teacher', 'room']
+    list_display = ['date', 'start_time', 'end_time', 'topic', 'title', 'teacher', 'room', 'status']
+    list_filter = ['date', 'status', 'topic']
+    search_fields = ['title', 'topic', 'teacher', 'room', 'content']
 
 
 @admin.register(Work)

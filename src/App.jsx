@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, clearTokens, getStoredTokens, login } from "./api";
-import communityCover from "./assets/community-cover.png";
-import galleryHero from "./assets/gallery-hero.png";
+import mascotFireReady from "./assets/mascot-fire-ready.png";
+import mascotFireShare from "./assets/mascot-fire-share.png";
+import mascotFireSkill from "./assets/mascot-fire-skill.png";
+import mascotFireWave from "./assets/mascot-fire-wave.png";
+import mascotUiLike from "./assets/mascot-ui-like-cut.png";
+import mascotUiMain from "./assets/mascot-ui-main-cut.png";
+import mascotUiSearch from "./assets/mascot-ui-search-cut.png";
+import mascotUiSuccess from "./assets/mascot-ui-success-cut.png";
+import mascotUiUpload from "./assets/mascot-ui-upload-cut.png";
 
 const studentTabs = [
   { id: "feed", label: "灵感", icon: "✦" },
@@ -25,14 +32,12 @@ const viewTitles = {
 };
 
 const trainingDates = [
-  { value: "2026-07-18", label: "07/18", weekday: "周六" },
   { value: "2026-07-19", label: "07/19", weekday: "周日" },
   { value: "2026-07-20", label: "07/20", weekday: "周一" },
   { value: "2026-07-21", label: "07/21", weekday: "周二" },
   { value: "2026-07-22", label: "07/22", weekday: "周三" },
   { value: "2026-07-23", label: "07/23", weekday: "周四" },
   { value: "2026-07-24", label: "07/24", weekday: "周五" },
-  { value: "2026-07-25", label: "07/25", weekday: "周六" },
 ];
 
 const genderOptions = [
@@ -46,12 +51,59 @@ const fallbackTones = ["blue", "violet", "orange"];
 const MAX_WORK_UPLOAD_BYTES = 500 * 1024 * 1024;
 const CHUNK_SIZE = 5 * 1024 * 1024;
 const WORK_FILE_ACCEPT = "image/*,.pdf,application/pdf,video/mp4,video/webm,video/quicktime";
+const WELCOME_SEEN_KEY = "newHireGallery.welcomeSeen";
+const mascotImages = {
+  ready: mascotFireReady,
+  share: mascotFireShare,
+  spark: mascotFireSkill,
+  wave: mascotFireWave,
+};
+
+const welcomeSteps = [
+  {
+    eyebrow: "第 1 站 / 初来乍到",
+    title: "你好，我是小火花",
+    text: "从今天开始，我会陪你把培训里的灵感、练习和作品，一点点养成自己的成长档案。",
+    speech: "先别急着证明自己，我们先把第一簇灵感点亮。",
+    metric: "HELLO",
+    mood: "wave",
+    tags: ["认识同学", "查看课表", "找到方向"],
+  },
+  {
+    eyebrow: "第 2 站 / 开始练习",
+    title: "把不会，变成会一点",
+    text: "课程表会告诉你今天该往哪里走；作品草稿会记录你每一次试错。别怕粗糙，成长一开始都带着铅笔痕。",
+    speech: "今天学到的一点点，明天就会变成你的工具箱。",
+    metric: "SKILL",
+    mood: "spark",
+    tags: ["AI 创作", "流程拆解", "导师反馈"],
+  },
+  {
+    eyebrow: "第 3 站 / 分享作品",
+    title: "让想法被看见",
+    text: "你可以上传图片、PDF、视频，也可以留下作品链接。通过审核后，同学们会看到你的作品、为你点赞、给你投票。",
+    speech: "分享不是炫耀，是把自己的路标留给后来的人。",
+    metric: "SHARE",
+    mood: "share",
+    tags: ["发布作品", "审核通过", "点赞投票"],
+  },
+  {
+    eyebrow: "第 4 站 / 一起长大",
+    title: "你不是一个人在升级",
+    text: "看别人的作品，给出喜欢和投票；收到打回也可以修改再提交。这里不是终点，是大家一起成长的展示墙。",
+    speech: "准备好了吗？我们去看看今天的新灵感。",
+    metric: "GO",
+    mood: "ready",
+    tags: ["互相看见", "继续修改", "共同成长"],
+  },
+];
 
 function App() {
   const [profile, setProfile] = useState(null);
   const [activeTab, setActiveTab] = useState("feed");
   const [booting, setBooting] = useState(true);
   const [loginError, setLoginError] = useState("");
+  const [showWelcome, setShowWelcome] = useState(false);
 
   const role = profile?.role;
   const tabs = role === "admin" ? adminTabs : studentTabs;
@@ -67,6 +119,7 @@ function App() {
         const me = await api.me();
         setProfile(me);
         setActiveTab(me.role === "admin" ? "review" : "feed");
+        setShowWelcome(shouldShowWelcome(me));
       } catch {
         clearTokens();
       } finally {
@@ -92,12 +145,28 @@ function App() {
     const me = await api.me();
     setProfile(me);
     setActiveTab(me.role === "admin" ? "review" : "feed");
+    setShowWelcome(shouldShowWelcome(me));
   }
 
   function logout() {
     clearTokens();
     setProfile(null);
     setActiveTab("feed");
+    setShowWelcome(false);
+  }
+
+  function finishWelcome() {
+    if (profile?.username) {
+      localStorage.setItem(`${WELCOME_SEEN_KEY}.${profile.username}`, "true");
+    }
+    setShowWelcome(false);
+  }
+
+  function replayWelcome() {
+    if (profile?.username) {
+      localStorage.removeItem(`${WELCOME_SEEN_KEY}.${profile.username}`);
+    }
+    setShowWelcome(true);
   }
 
   if (booting) {
@@ -116,7 +185,7 @@ function App() {
     <div className={`app ${role === "admin" ? "adminMode" : ""}`}>
       <aside className="sideNav">
         <button className="brandButton" onClick={logout} type="button" aria-label="退出登录">
-          <span>新</span>
+          <span>火</span>
         </button>
         <nav>
           {tabs.map((tab) => (
@@ -134,19 +203,26 @@ function App() {
       </aside>
 
       <main className="content">
-        {!(role === "student" && activeTab === "feed") && (
+        {!(role === "student" && (activeTab === "feed" || activeTab === "profile")) && (
           <TopBar activeTab={activeTab} role={role} onLogout={logout} />
         )}
         {activeTab === "feed" && <FeedView role={role} />}
         {activeTab === "courses" && <CourseView />}
         {activeTab === "publish" && <PublishView />}
-        {activeTab === "profile" && <ProfileView profile={profile} onProfileSaved={setProfile} />}
+        {activeTab === "profile" && (
+          <ProfileView profile={profile} onLogout={logout} onProfileSaved={setProfile} onReplayWelcome={replayWelcome} />
+        )}
         {activeTab === "review" && role === "admin" && <ReviewView />}
       </main>
 
       {role === "student" ? <StudentRail /> : <AdminRail />}
+      {role === "student" && showWelcome && <WelcomeCeremony profile={profile} onFinish={finishWelcome} />}
     </div>
   );
+}
+
+function shouldShowWelcome(profile) {
+  return profile?.role === "student" && localStorage.getItem(`${WELCOME_SEEN_KEY}.${profile.username}`) !== "true";
 }
 
 function LoginScreen({ error, onError, onLogin }) {
@@ -177,9 +253,19 @@ function LoginScreen({ error, onError, onLogin }) {
     <main className="loginPage">
       <section className="loginHero">
         <div className="loginCopy">
-          <span>New Hire Gallery</span>
-          <h1>新人灵感墙</h1>
-          <p>现在已经接入 Django 后端，登录后会用限时 Token 访问课程、作品、个人资料和审核接口。</p>
+          <div className="loginBrand">
+            <img src={mascotUiMain} alt="" />
+            <div>
+              <span>New Hire Gallery</span>
+              <h1>新人灵感墙</h1>
+            </div>
+          </div>
+          <p>让成长被看见，让优秀被分享。登录后用限时 Token 访问课程、作品、互动、个人资料和审核流程。</p>
+          <div className="loginValueGrid">
+            <strong>展示自我</strong>
+            <strong>互动鼓励</strong>
+            <strong>成长陪伴</strong>
+          </div>
           <form className="loginForm" onSubmit={submit}>
             <label>
               账号
@@ -209,14 +295,132 @@ function LoginScreen({ error, onError, onLogin }) {
           </div>
         </div>
         <div className="loginVisual">
-          <img src={galleryHero} alt="新人展示墙视觉预览" />
+          <div className="loginMascotPoster">
+            <span>小燃陪你每一步</span>
+            <img src={mascotUiMain} alt="小燃欢迎新员工" />
+            <div className="posterOrbit">
+              <strong>发布作品</strong>
+              <strong>点赞投票</strong>
+              <strong>审核通过</strong>
+            </div>
+          </div>
           <div className="floatingNote">
-            <strong>真实接口已接入</strong>
-            <span>JWT 登录 · 作品审核 · 点赞投票 · 个人资料</span>
+            <strong>开启成长旅程</strong>
+            <span>课程 · 作品 · 互动 · 审核 · 个人主页</span>
           </div>
         </div>
       </section>
     </main>
+  );
+}
+
+function WelcomeCeremony({ profile, onFinish }) {
+  const [step, setStep] = useState(0);
+  const [touchStart, setTouchStart] = useState(null);
+  const current = welcomeSteps[step];
+
+  function move(nextStep) {
+    setStep(Math.max(0, Math.min(welcomeSteps.length - 1, nextStep)));
+  }
+
+  function handleWheel(event) {
+    if (Math.abs(event.deltaY) < 18) {
+      return;
+    }
+    move(step + (event.deltaY > 0 ? 1 : -1));
+  }
+
+  function handleTouchStart(event) {
+    setTouchStart(event.touches[0]?.clientY ?? null);
+  }
+
+  function handleTouchEnd(event) {
+    if (touchStart === null) {
+      return;
+    }
+    const endY = event.changedTouches[0]?.clientY ?? touchStart;
+    const distance = touchStart - endY;
+    if (Math.abs(distance) > 42) {
+      move(step + (distance > 0 ? 1 : -1));
+    }
+    setTouchStart(null);
+  }
+
+  return (
+    <section className={`welcomeCeremony scene${step}`} onTouchEnd={handleTouchEnd} onTouchStart={handleTouchStart} onWheel={handleWheel}>
+      <div className="welcomeDeck">
+        <div className="welcomeStage" aria-hidden="true">
+          <div className="storySky">
+            <span />
+            <span />
+            <span />
+          </div>
+          <div className="speechBubble" key={current.speech}>
+            <p>{current.speech}</p>
+          </div>
+          <FireMascot mood={current.mood} />
+          <div className="storyGround">
+            <span className="seedDot" />
+            <span className="seedDot" />
+            <span className="seedDot" />
+          </div>
+          <div className="growthPath">
+            {welcomeSteps.map((item, index) => (
+              <button
+                className={index === step ? "active" : ""}
+                key={item.title}
+                onClick={() => move(index)}
+                type="button"
+                aria-label={`切换到${item.title}`}
+              >
+                <span>{index + 1}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="welcomeCopy" key={current.title}>
+          <div className="welcomeBadge">
+            <span>{current.eyebrow}</span>
+            <strong>{current.metric}</strong>
+          </div>
+          <h2>{current.title}</h2>
+          <p>{current.text}</p>
+          <div className="welcomeTags">
+            {current.tags.map((tag) => (
+              <strong key={tag}>{tag}</strong>
+            ))}
+          </div>
+          <div className="storyProgress" aria-label="欢迎流程进度">
+            {welcomeSteps.map((item, index) => (
+              <span className={index <= step ? "active" : ""} key={item.title} />
+            ))}
+          </div>
+          <div className="welcomeMeta">
+            <span>{profile.name || profile.username}，上下滚动或滑动切换下一页</span>
+            <div>
+              <button disabled={step === 0} onClick={() => move(step - 1)} type="button">
+                上一页
+              </button>
+              {step === welcomeSteps.length - 1 ? (
+                <button onClick={onFinish} type="button">和小火花一起出发</button>
+              ) : (
+                <button onClick={() => move(step + 1)} type="button">继续</button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function FireMascot({ mood }) {
+  return (
+    <div className={`fireMascot ${mood}`} aria-hidden="true">
+      <span className="fireGlow" />
+      <img className="fireSprite" src={mascotImages[mood] ?? mascotFireWave} alt="" />
+    </div>
   );
 }
 
@@ -235,7 +439,8 @@ function TopBar({ activeTab, role, onLogout }) {
 }
 
 function FeedView({ role }) {
-  const [selectedDate, setSelectedDate] = useState("2026-07-20");
+  const [selectedDate, setSelectedDate] = useState("2026-07-19");
+  const [selectedCourse, setSelectedCourse] = useState(null);
   const [filter, setFilter] = useState("all");
   const [keyword, setKeyword] = useState("");
   const [searchResults, setSearchResults] = useState(null);
@@ -243,6 +448,7 @@ function FeedView({ role }) {
   const [works, setWorks] = useState([]);
   const [leaderboard, setLeaderboard] = useState([]);
   const [courses, setCourses] = useState([]);
+  const [selectedWork, setSelectedWork] = useState(null);
   const [loading, setLoading] = useState(true);
   const [coursesLoading, setCoursesLoading] = useState(true);
   const [error, setError] = useState("");
@@ -331,10 +537,36 @@ function FeedView({ role }) {
     setSearchResults(null);
   }
 
+  async function likeSelectedWork() {
+    if (!selectedWork) {
+      return;
+    }
+    await likeWork(selectedWork.id);
+    setSelectedWork((current) => (current ? { ...current, like_count: (current.like_count ?? 0) + 1 } : current));
+  }
+
+  async function voteSelectedWork() {
+    if (!selectedWork) {
+      return;
+    }
+    await voteWork(selectedWork.id);
+    setSelectedWork((current) => (current ? { ...current, vote_count: (current.vote_count ?? 0) + 1 } : current));
+  }
+
+  if (selectedWork) {
+    return (
+      <WorkDetailPage
+        onBack={() => setSelectedWork(null)}
+        onLike={likeSelectedWork}
+        onVote={voteSelectedWork}
+        work={selectedWork}
+      />
+    );
+  }
+
   return (
     <section className="marketHome">
       <div className="marketTop">
-        <button type="button">📍 新员工培训营</button>
         <form className="searchBox" onSubmit={submitSearch}>
           <input
             aria-label="搜索作品或同学"
@@ -352,16 +584,31 @@ function FeedView({ role }) {
           keyword={keyword}
           onClear={clearSearch}
           onLike={likeWork}
+          onOpenWork={setSelectedWork}
           onVote={voteWork}
           results={searchResults}
         />
       )}
 
+      <div className="feedHero">
+        <div>
+          <span>新员工训练营</span>
+          <h2>优秀作品展示中</h2>
+          <p>分享成长，收获认可。浏览课程进度、TOP 排行榜和同学们的创意作品。</p>
+          <div className="heroPills">
+            <strong>课程 7/19 - 7/24</strong>
+            <strong>点赞榜 TOP5</strong>
+            <strong>投票榜 TOP5</strong>
+          </div>
+        </div>
+        <img src={mascotUiMain} alt="" />
+      </div>
+
       <div className="schedulePanel">
         <div className="scheduleHead">
           <div>
             <span>课程表</span>
-            <h2>7月18日 - 25日</h2>
+            <h2>7月19日 - 24日</h2>
           </div>
           <p>切换日期查看当天课程安排</p>
         </div>
@@ -402,12 +649,12 @@ function FeedView({ role }) {
               </div>
             ) : (
               courses.map((course) => (
-                <div className="scheduleRow" key={course.id} role="row">
+                <button className="scheduleRow scheduleActionRow" key={course.id} onClick={() => setSelectedCourse(course)} type="button" role="row">
                   <span>{formatCourseTime(course)}</span>
                   <strong>{course.title}</strong>
                   <span>{course.teacher} · {course.room}</span>
                   <em className={course.status}>{course.status_label}</em>
-                </div>
+                </button>
               ))
             )}
           </div>
@@ -462,17 +709,19 @@ function FeedView({ role }) {
               index={index}
               key={work.id}
               onLike={() => likeWork(work.id)}
+              onOpen={() => setSelectedWork(work)}
               onVote={() => voteWork(work.id)}
               work={work}
             />
           ))}
         </div>
       )}
+      {selectedCourse && <CourseDetailModal course={selectedCourse} onClose={() => setSelectedCourse(null)} />}
     </section>
   );
 }
 
-function SearchResultsPanel({ keyword, onClear, onLike, onVote, results }) {
+function SearchResultsPanel({ keyword, onClear, onLike, onOpenWork, onVote, results }) {
   const workResults = results.works ?? [];
   const profileResults = results.profiles ?? [];
 
@@ -501,6 +750,7 @@ function SearchResultsPanel({ keyword, onClear, onLike, onVote, results }) {
                     index={index}
                     key={work.id}
                     onLike={() => onLike(work.id)}
+                    onOpen={() => onOpenWork(work)}
                     onVote={() => onVote(work.id)}
                     work={work}
                   />
@@ -537,13 +787,24 @@ function SearchResultsPanel({ keyword, onClear, onLike, onVote, results }) {
   );
 }
 
-function WorkCard({ work, index, onLike, onVote }) {
+function WorkCard({ work, index, onLike, onOpen, onVote }) {
   const image = getWorkImage(work);
   const attachment = work.attachment;
   const tone = fallbackTones[index % fallbackTones.length];
 
   return (
-    <article className={`workCard card${index}`}>
+    <article
+      className={`workCard card${index}`}
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
+      role="button"
+      tabIndex="0"
+    >
       {work.media_type === "video" && attachment ? (
         <video className="workImage" controls src={attachment} />
       ) : image ? (
@@ -567,26 +828,137 @@ function WorkCard({ work, index, onLike, onVote }) {
           <small>{work.status_label || "已发布"}</small>
         </div>
         {work.link && (
-          <a className="workLink" href={work.link} rel="noreferrer" target="_blank">
+          <a className="workLink" href={work.link} onClick={(event) => event.stopPropagation()} rel="noreferrer" target="_blank">
             查看作品链接
           </a>
         )}
         {attachment && (
-          <a className="workLink" href={attachment} rel="noreferrer" target="_blank">
+          <a className="workLink" href={attachment} onClick={(event) => event.stopPropagation()} rel="noreferrer" target="_blank">
             打开{mediaTypeLabel(work)}
           </a>
         )}
         <div className="actionRow">
-          <button onClick={onLike} type="button">喜欢 {work.like_count ?? 0}</button>
-          <button onClick={onVote} type="button">投票</button>
+          <button
+            onClick={(event) => {
+              event.stopPropagation();
+              onLike();
+            }}
+            type="button"
+          >
+            喜欢 {work.like_count ?? 0}
+          </button>
+          <button
+            onClick={(event) => {
+              event.stopPropagation();
+              onVote();
+            }}
+            type="button"
+          >
+            投票
+          </button>
         </div>
       </div>
     </article>
   );
 }
 
+function WorkDetailPage({ work, onBack, onLike, onVote }) {
+  const image = getWorkImage(work);
+  const attachment = work.attachment;
+
+  return (
+    <section className="workDetailPage">
+      <div className="workDetailTop">
+        <button onClick={onBack} type="button">‹ 返回</button>
+        <span>作品详情</span>
+      </div>
+      <article className="workDetailCard">
+        <div className="workDetailMedia">
+          {work.media_type === "video" && attachment ? (
+            <video controls src={attachment} />
+          ) : image ? (
+            <img src={image} alt={work.title} />
+          ) : (
+            <div className={`workDetailGenerated ${fallbackTones[work.id % fallbackTones.length]}`}>
+              <span>{mediaTypeLabel(work)}</span>
+              <strong>{work.title}</strong>
+            </div>
+          )}
+        </div>
+        <div className="workDetailBody">
+          <div className="tagLine">
+            <span>{workTypeLabel(work)}</span>
+            <span>{mediaTypeLabel(work)}</span>
+            <span>{work.vote_count ?? 0} 票</span>
+          </div>
+          <h2>{work.title}</h2>
+          <div className="authorLine">
+            <span className="avatar">{(work.author_name || "新").slice(0, 1)}</span>
+            <strong>{work.author_name || "新员工"}</strong>
+            <small>{work.status_label || "已发布"}</small>
+          </div>
+          <section>
+            <h3>作品介绍</h3>
+            <p>{work.description}</p>
+          </section>
+          <div className="workDetailLinks">
+            {work.link && (
+              <a href={work.link} rel="noreferrer" target="_blank">
+                打开作品链接
+              </a>
+            )}
+            {attachment && (
+              <a href={attachment} rel="noreferrer" target="_blank">
+                打开{mediaTypeLabel(work)}
+              </a>
+            )}
+          </div>
+          <div className="workDetailActions">
+            <button onClick={onLike} type="button">喜欢 {work.like_count ?? 0}</button>
+            <button onClick={onVote} type="button">投票</button>
+          </div>
+        </div>
+      </article>
+    </section>
+  );
+}
+
+function CourseDetailModal({ course, onClose }) {
+  return (
+    <div className="courseDetailOverlay" onClick={onClose} role="presentation">
+      <article className="courseDetailCard" onClick={(event) => event.stopPropagation()} role="dialog" aria-label="课程详情" aria-modal="true">
+        <button className="courseDetailClose" onClick={onClose} type="button" aria-label="关闭">×</button>
+        <div className="courseDetailHead">
+          <span>{course.topic || "培训课程"}</span>
+          <h2>{course.title}</h2>
+          <em className={course.status}>{course.status_label}</em>
+        </div>
+        <div className="courseDetailMeta">
+          <strong>
+            上课时间
+            <span>{formatDate(course.date)} {formatCourseTime(course)}</span>
+          </strong>
+          <strong>
+            上课地点
+            <span>{course.room || "待确认"}</span>
+          </strong>
+          <strong>
+            授课师资
+            <span>{course.teacher || "待确认"}</span>
+          </strong>
+        </div>
+        <div className="courseDetailBody">
+          <span>课程内容</span>
+          <p>{course.content || "课程内容待补充。"}</p>
+        </div>
+      </article>
+    </div>
+  );
+}
+
 function CourseView() {
   const [courses, setCourses] = useState([]);
+  const [selectedCourse, setSelectedCourse] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -616,15 +988,16 @@ function CourseView() {
       ) : (
         <div className="courseGrid">
           {courses.map((course) => (
-            <article className={`courseCard ${course.status}`} key={course.id}>
+            <button className={`courseCard ${course.status}`} key={course.id} onClick={() => setSelectedCourse(course)} type="button">
               <span>{course.status_label}</span>
               <h3>{course.title}</h3>
-              <p>{course.teacher} · {course.room}</p>
+              <p>{course.topic} · {course.teacher} · {course.room}</p>
               <strong>{formatDate(course.date)} {formatCourseTime(course)}</strong>
-            </article>
+            </button>
           ))}
         </div>
       )}
+      {selectedCourse && <CourseDetailModal course={selectedCourse} onClose={() => setSelectedCourse(null)} />}
     </section>
   );
 }
@@ -664,10 +1037,13 @@ function PublishView() {
 
   return (
     <section className="creatorScene">
-      <div className="panelTitle">
-        <span>发布</span>
-        <h2>提交一份新人作品</h2>
-        <p>提交后会进入 Django 审核流，管理员通过后才会正式出现在作品流里。</p>
+      <div className="creatorHero">
+        <div className="panelTitle">
+          <span>发布作品</span>
+          <h2>提交一份新人作品</h2>
+          <p>上传图片、PDF 或视频，提交后进入审核流，通过后正式出现在展示墙。</p>
+        </div>
+        <img src={mascotUiUpload} alt="" />
       </div>
       <form className="publishForm" onSubmit={submit}>
         <label>
@@ -773,10 +1149,14 @@ function ReviewView() {
   }
 
   return (
-    <section className="sectionPanel">
-      <div className="panelTitle">
-        <span>仅管理员可见</span>
-        <h2>待审核内容</h2>
+    <section className="sectionPanel reviewScene">
+      <div className="reviewHero">
+        <div className="panelTitle">
+          <span>仅管理员可见</span>
+          <h2>审核工作台</h2>
+          <p>集中预览待审作品，确认内容质量后通过或打回。</p>
+        </div>
+        <img src={mascotUiSuccess} alt="" />
       </div>
       {error && <p className="errorText">{error}</p>}
       {loading ? (
@@ -809,10 +1189,11 @@ function ReviewView() {
   );
 }
 
-function ProfileView({ profile, onProfileSaved }) {
+function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(profile);
   const [avatarFile, setAvatarFile] = useState(null);
+  const [showSettings, setShowSettings] = useState(false);
   const [myWorks, setMyWorks] = useState([]);
   const [editingWorkId, setEditingWorkId] = useState(null);
   const [workDraft, setWorkDraft] = useState(null);
@@ -841,6 +1222,7 @@ function ProfileView({ profile, onProfileSaved }) {
   function startEditing() {
     setDraft(profile);
     setAvatarFile(null);
+    setShowSettings(false);
     setMessage("");
     setError("");
     setIsEditing(true);
@@ -916,113 +1298,141 @@ function ProfileView({ profile, onProfileSaved }) {
   const heat = myWorks.reduce((sum, work) => sum + scoreWork(work), 0);
   const votes = myWorks.reduce((sum, work) => sum + (work.vote_count ?? 0), 0);
 
+  if (isEditing) {
+    return (
+      <section className="profileScene profileEditScene">
+        <div className="profileEditTop">
+          <button onClick={() => setIsEditing(false)} type="button" aria-label="返回">‹</button>
+          <strong>编辑资料</strong>
+          <span />
+        </div>
+
+        <form className="profileEditForm" onSubmit={saveProfile}>
+          <label className="profileEditRow profileEditAvatarRow">
+            <span>头像</span>
+            <div>
+              {profile.avatar ? (
+                <img className="profileEditPreview" src={profile.avatar} alt={profile.name} />
+              ) : (
+                <i className="profileEditPreview">{profile.name?.slice(0, 1) || "新"}</i>
+              )}
+              <input accept="image/*" onChange={(event) => setAvatarFile(event.target.files?.[0] ?? null)} type="file" />
+            </div>
+          </label>
+
+          <label className="profileEditRow">
+            <span>昵称</span>
+            <input value={draft.name || ""} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+          </label>
+          <label className="profileEditRow">
+            <span>学校</span>
+            <input value={draft.school || ""} onChange={(event) => setDraft({ ...draft, school: event.target.value })} />
+          </label>
+          <label className="profileEditRow">
+            <span>性别</span>
+            <select value={draft.gender || "unknown"} onChange={(event) => setDraft({ ...draft, gender: event.target.value })}>
+              {genderOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="profileEditRow">
+            <span>星座</span>
+            <input value={draft.zodiac || ""} onChange={(event) => setDraft({ ...draft, zodiac: event.target.value })} />
+          </label>
+          <label className="profileEditRow">
+            <span>MBTI</span>
+            <input
+              maxLength="4"
+              value={draft.mbti || ""}
+              onChange={(event) => setDraft({ ...draft, mbti: event.target.value.toUpperCase() })}
+            />
+          </label>
+          <label className="profileEditRow profileEditTextarea">
+            <span>个人简介</span>
+            <textarea
+              maxLength="100"
+              value={draft.bio || ""}
+              rows="4"
+              onChange={(event) => setDraft({ ...draft, bio: event.target.value })}
+            />
+            <small>{(draft.bio || "").length}/100</small>
+          </label>
+
+          {error && <p className="errorText">{error}</p>}
+          <button className="profileSaveButton" type="submit">保存修改</button>
+        </form>
+      </section>
+    );
+  }
+
   return (
     <section className="profileScene">
-      <div className="profileCover">
-        <img src={galleryHero} alt="个人主页封面" />
+      <div className="profilePhoneTop">
+        <span>9:41</span>
+        <strong>个人中心</strong>
+        <button onClick={() => setShowSettings((current) => !current)} type="button" aria-label="设置">⚙</button>
+        {showSettings && (
+          <div className="profileSettingsMenu">
+            <button onClick={startEditing} type="button">编辑资料</button>
+            <button onClick={onLogout} type="button">退出登录</button>
+          </div>
+        )}
       </div>
 
-      <div className="profileHome">
-        <div className="profileAvatarBlock">
-          {profile.avatar ? (
-            <img className="bigAvatar profileAvatarImage" src={profile.avatar} alt={profile.name} />
-          ) : (
-            <span className="bigAvatar">{profile.name?.slice(0, 1) || "新"}</span>
-          )}
+      <div className="profileHeroCard">
+        {profile.avatar ? (
+          <img className="profileHeroAvatar" src={profile.avatar} alt={profile.name} />
+        ) : (
+          <span className="profileHeroAvatar">{profile.name?.slice(0, 1) || "新"}</span>
+        )}
+        <div className="profileHeroInfo">
+          <h2>{profile.name || profile.username} <span>🔥</span></h2>
+          <div className="profileMiniMeta">
+            <span>{profile.school || "未填写学校"}</span>
+            <span>{genderLabel(profile.gender)}</span>
+            <span>{profile.zodiac || "未填写星座"}</span>
+            <span>{profile.mbti || "MBTI"}</span>
+          </div>
+          <p>{profile.bio || "热爱设计与交互，喜欢用作品解决问题，期待和大家一起成长~"}</p>
           <button onClick={startEditing} type="button">
-            编辑资料
+            ✎ 编辑资料
           </button>
         </div>
-
-        <div className="profileMainInfo">
-          <span>个人主页</span>
-          <h2>{profile.name || profile.username}</h2>
-          <p>{profile.bio || "这个人正在认真准备自己的展示墙。"}</p>
-          <div className="profileMeta">
-            <span>毕业院校：{profile.school || "未填写"}</span>
-            <span>性别：{genderLabel(profile.gender)}</span>
-            <span>星座：{profile.zodiac || "未填写"}</span>
-            <span>MBTI：{profile.mbti || "未填写"}</span>
-          </div>
-          <div className="profileStats">
-            <strong>
-              {myWorks.length}
-              <span>作品</span>
-            </strong>
-            <strong>
-              {heat}
-              <span>热度</span>
-            </strong>
-            <strong>
-              {votes}
-              <span>获票</span>
-            </strong>
-          </div>
-          {message && <p className="successText">{message}</p>}
-        </div>
       </div>
 
-      {isEditing && (
-        <form className="profileEditPanel" onSubmit={saveProfile}>
-          <div className="panelTitle">
-            <span>编辑资料</span>
-            <h2>更新个人信息</h2>
-          </div>
-          <div className="profileGrid">
-            <label>
-              名字
-              <input value={draft.name || ""} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
-            </label>
-            <label>
-              毕业院校
-              <input value={draft.school || ""} onChange={(event) => setDraft({ ...draft, school: event.target.value })} />
-            </label>
-            <label>
-              性别
-              <select value={draft.gender || "unknown"} onChange={(event) => setDraft({ ...draft, gender: event.target.value })}>
-                {genderOptions.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              星座
-              <input value={draft.zodiac || ""} onChange={(event) => setDraft({ ...draft, zodiac: event.target.value })} />
-            </label>
-            <label>
-              MBTI
-              <input
-                maxLength="4"
-                value={draft.mbti || ""}
-                onChange={(event) => setDraft({ ...draft, mbti: event.target.value.toUpperCase() })}
-              />
-            </label>
-            <label>
-              个人简介
-              <textarea value={draft.bio || ""} rows="4" onChange={(event) => setDraft({ ...draft, bio: event.target.value })} />
-            </label>
-            <label>
-              头像
-              <input accept="image/*" onChange={(event) => setAvatarFile(event.target.files?.[0] ?? null)} type="file" />
-            </label>
-          </div>
-          {error && <p className="errorText">{error}</p>}
-          <div className="editActions">
-            <button type="submit">保存资料</button>
-            <button onClick={() => setIsEditing(false)} type="button">
-              取消
-            </button>
-          </div>
-        </form>
-      )}
+      <button className="profileReplayCard" onClick={onReplayWelcome} type="button">
+        <img src={mascotUiMain} alt="" />
+        <div>
+          <strong>重看欢迎动画</strong>
+          <span>回顾加入时刻的温暖与期待</span>
+        </div>
+        <i>▶</i>
+      </button>
+
+      <div className="profileStats">
+        <strong>
+          {myWorks.length}
+          <span>作品</span>
+        </strong>
+        <strong>
+          {heat}
+          <span>热度</span>
+        </strong>
+        <strong>
+          {votes}
+          <span>获票</span>
+        </strong>
+      </div>
+      {message && <p className="successText profileMessage">{message}</p>}
 
       <div className="profileWorks">
         <div className="profileWorksTitle">
           <div>
             <span>作品</span>
-            <h3>我的展示墙</h3>
+            <h3>我的作品 <em>{myWorks.length}</em></h3>
           </div>
-          <button type="button">全部状态</button>
+          <button type="button">全部作品 ›</button>
         </div>
         {myWorks.length === 0 ? (
           <EmptyState title="还没有作品" text="发布第一份作品后，这里会变成你的个人作品页。" />
@@ -1037,8 +1447,11 @@ function ProfileView({ profile, onProfileSaved }) {
                     <span>{mediaTypeLabel(work)}</span>
                   </div>
                 )}
-                <h4>{work.title}</h4>
-                <p>{work.like_count ?? 0} 喜欢 · {work.vote_count ?? 0} 票</p>
+                <div className="profileWorkInfo">
+                  <h4>{work.title}</h4>
+                  <p>赞 {work.like_count ?? 0} · 票 {work.vote_count ?? 0}</p>
+                  <small>更新于 {formatWorkDate(work.updated_at || work.created_at)}</small>
+                </div>
                 <strong className={work.status}>{work.status_label}</strong>
                 {work.status === "rejected" && (
                   <div className="rejectInfo">
@@ -1129,7 +1542,7 @@ function StudentRail() {
   return (
     <aside className="rightRail">
       <section className="featureCard">
-        <img src={communityCover} alt="精选作品封面" />
+        <img src={mascotUiSearch} alt="小燃发现精选作品" />
         <div>
           <span>本周精选</span>
           <h2>{featured?.title || "等待第一份精选作品"}</h2>
@@ -1164,6 +1577,7 @@ function AdminRail() {
   return (
     <aside className="rightRail">
       <section className="adminSummary">
+        <img src={mascotUiSuccess} alt="" />
         <span>待处理</span>
         <strong>{pendingCount}</strong>
         <p>作品正在等待审核</p>
@@ -1192,11 +1606,27 @@ function formatDate(date) {
   return date.slice(5).replace("-", "/");
 }
 
+function formatWorkDate(value) {
+  if (!value) {
+    return "刚刚";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "刚刚";
+  }
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
 function formatTime(time) {
   return time?.slice(0, 5) ?? "";
 }
 
 function formatCourseTime(course) {
+  if (formatTime(course.start_time) === formatTime(course.end_time)) {
+    return formatTime(course.start_time);
+  }
   return `${formatTime(course.start_time)}-${formatTime(course.end_time)}`;
 }
 

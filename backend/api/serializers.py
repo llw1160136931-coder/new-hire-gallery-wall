@@ -73,8 +73,10 @@ class CourseSerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'title',
+            'topic',
             'teacher',
             'room',
+            'content',
             'date',
             'start_time',
             'end_time',

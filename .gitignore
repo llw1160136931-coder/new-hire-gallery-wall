@@ -7,3 +7,6 @@ backend/media/
 __pycache__/
 *.pyc
 .DS_Store
+*.xlsx
+~$*
+UI设计/
