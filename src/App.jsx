@@ -50,8 +50,15 @@ const genderOptions = [
 const fallbackTones = ["blue", "violet", "orange"];
 const MAX_WORK_UPLOAD_BYTES = 500 * 1024 * 1024;
 const CHUNK_SIZE = 5 * 1024 * 1024;
+const MAX_WORK_IMAGE_COUNT = 10;
 const WORK_FILE_ACCEPT = "image/*,.pdf,application/pdf,video/mp4,video/webm,video/quicktime";
 const WELCOME_SEEN_KEY = "newHireGallery.welcomeSeen";
+const REVIEW_REJECT_TEMPLATES = [
+  "作品介绍不够完整，请补充背景、亮点和创作过程。",
+  "作品链接或附件暂时无法打开，请检查后重新提交。",
+  "内容需要规避敏感信息，请处理后再次提交。",
+  "文件预览不清晰，请上传更清楚的版本。",
+];
 const mascotImages = {
   ready: mascotFireReady,
   share: mascotFireShare,
@@ -260,7 +267,10 @@ function LoginScreen({ error, onError, onLogin }) {
               <h1>新人灵感墙</h1>
             </div>
           </div>
-          <p>让成长被看见，让优秀被分享。登录后用限时 Token 访问课程、作品、互动、个人资料和审核流程。</p>
+          <p className="loginSlogan">
+            <strong>让成长被看见</strong>
+            <i>让优秀被分享</i>
+          </p>
           <div className="loginValueGrid">
             <strong>展示自我</strong>
             <strong>互动鼓励</strong>
@@ -453,6 +463,8 @@ function FeedView({ role }) {
   const [coursesLoading, setCoursesLoading] = useState(true);
   const [error, setError] = useState("");
   const [coursesError, setCoursesError] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
+  const [actionError, setActionError] = useState("");
   const [scheduleEpoch, setScheduleEpoch] = useState(0);
 
   async function loadWorks() {
@@ -484,6 +496,25 @@ function FeedView({ role }) {
     }
   }
 
+  function syncWorkFromResponse(nextWork) {
+    if (!nextWork) {
+      return;
+    }
+
+    setWorks((current) => current.map((work) => (work.id === nextWork.id ? nextWork : work)));
+    setSelectedWork((current) => (current?.id === nextWork.id ? nextWork : current));
+    setSearchResults((current) => {
+      if (!current?.works) {
+        return current;
+      }
+
+      return {
+        ...current,
+        works: current.works.map((work) => (work.id === nextWork.id ? nextWork : work)),
+      };
+    });
+  }
+
   useEffect(() => {
     loadWorks();
   }, [filter]);
@@ -504,13 +535,35 @@ function FeedView({ role }) {
   const totalVotes = rankedWorks.reduce((sum, work) => sum + (work.vote_count ?? 0), 0);
 
   async function likeWork(id) {
-    await api.likeWork(id);
-    await loadWorks();
+    setActionMessage("");
+    setActionError("");
+    try {
+      const response = await api.likeWork(id);
+      syncWorkFromResponse(response?.work);
+      setActionMessage(response?.detail || "点赞成功");
+      await loadWorks();
+      return response;
+    } catch (actionFailure) {
+      syncWorkFromResponse(actionFailure.details?.work);
+      setActionError(actionFailure.message || "点赞失败");
+      return null;
+    }
   }
 
   async function voteWork(id) {
-    await api.voteWork(id);
-    await loadWorks();
+    setActionMessage("");
+    setActionError("");
+    try {
+      const response = await api.voteWork(id);
+      syncWorkFromResponse(response?.work);
+      setActionMessage(response?.detail || "投票成功");
+      await loadWorks();
+      return response;
+    } catch (actionFailure) {
+      syncWorkFromResponse(actionFailure.details?.work);
+      setActionError(actionFailure.message || "投票失败");
+      return null;
+    }
   }
 
   async function submitSearch(event) {
@@ -542,7 +595,6 @@ function FeedView({ role }) {
       return;
     }
     await likeWork(selectedWork.id);
-    setSelectedWork((current) => (current ? { ...current, like_count: (current.like_count ?? 0) + 1 } : current));
   }
 
   async function voteSelectedWork() {
@@ -550,12 +602,13 @@ function FeedView({ role }) {
       return;
     }
     await voteWork(selectedWork.id);
-    setSelectedWork((current) => (current ? { ...current, vote_count: (current.vote_count ?? 0) + 1 } : current));
   }
 
   if (selectedWork) {
     return (
       <WorkDetailPage
+        actionError={actionError}
+        actionMessage={actionMessage}
         onBack={() => setSelectedWork(null)}
         onLike={likeSelectedWork}
         onVote={voteSelectedWork}
@@ -589,6 +642,9 @@ function FeedView({ role }) {
           results={searchResults}
         />
       )}
+
+      {actionError && <p className="errorText interactionNotice">{actionError}</p>}
+      {actionMessage && <p className="successText interactionNotice">{actionMessage}</p>}
 
       <div className="feedHero">
         <div>
@@ -788,7 +844,8 @@ function SearchResultsPanel({ keyword, onClear, onLike, onOpenWork, onVote, resu
 }
 
 function WorkCard({ work, index, onLike, onOpen, onVote }) {
-  const image = getWorkImage(work);
+  const images = getWorkImages(work);
+  const image = images[0] || getWorkImage(work);
   const attachment = work.attachment;
   const tone = fallbackTones[index % fallbackTones.length];
 
@@ -808,7 +865,10 @@ function WorkCard({ work, index, onLike, onOpen, onVote }) {
       {work.media_type === "video" && attachment ? (
         <video className="workImage" controls src={attachment} />
       ) : image ? (
-        <img className="workImage" src={image} alt={work.title} />
+        <div className="workImageStack">
+          <img className="workImage" src={image} alt={work.title} />
+          {images.length > 1 && <span>共 {images.length} 张</span>}
+        </div>
       ) : (
         <div className={`workImage generated ${tone}`}>
           <span>{mediaTypeLabel(work)}</span>
@@ -862,8 +922,9 @@ function WorkCard({ work, index, onLike, onOpen, onVote }) {
   );
 }
 
-function WorkDetailPage({ work, onBack, onLike, onVote }) {
-  const image = getWorkImage(work);
+function WorkDetailPage({ work, onBack, onLike, onVote, actionMessage, actionError }) {
+  const images = getWorkImages(work);
+  const image = images[0] || getWorkImage(work);
   const attachment = work.attachment;
 
   return (
@@ -872,10 +933,18 @@ function WorkDetailPage({ work, onBack, onLike, onVote }) {
         <button onClick={onBack} type="button">‹ 返回</button>
         <span>作品详情</span>
       </div>
+      {actionError && <p className="errorText interactionNotice">{actionError}</p>}
+      {actionMessage && <p className="successText interactionNotice">{actionMessage}</p>}
       <article className="workDetailCard">
         <div className="workDetailMedia">
           {work.media_type === "video" && attachment ? (
             <video controls src={attachment} />
+          ) : images.length > 0 ? (
+            <div className={`workDetailGallery count${Math.min(images.length, 4)}`}>
+              {images.map((src, index) => (
+                <img src={src} alt={`${work.title} ${index + 1}`} key={`${src}-${index}`} />
+              ))}
+            </div>
           ) : image ? (
             <img src={image} alt={work.title} />
           ) : (
@@ -1003,7 +1072,7 @@ function CourseView() {
 }
 
 function PublishView() {
-  const initialForm = { title: "", work_type: "ai", link: "", image_url: "", asset: null, description: "" };
+  const initialForm = { title: "", work_type: "ai", link: "", asset: null, images: [], description: "" };
   const [form, setForm] = useState(initialForm);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [uploadProgress, setUploadProgress] = useState(null);
@@ -1018,7 +1087,7 @@ function PublishView() {
     setError("");
 
     try {
-      const uploadId = form.asset ? await uploadWorkAsset(form.asset, setUploadProgress) : null;
+      const uploadId = form.asset && form.images.length === 0 ? await uploadWorkAsset(form.asset, setUploadProgress) : null;
       await api.createWork(buildWorkFormData(form, uploadId));
       setForm(initialForm);
       setFileInputKey((current) => current + 1);
@@ -1033,6 +1102,19 @@ function PublishView() {
 
   function updateField(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateFiles(fileList) {
+    const nextFiles = normalizeSelectedWorkFiles(fileList);
+    if (nextFiles.error) {
+      setError(nextFiles.error);
+      updateField("asset", null);
+      updateField("images", []);
+      return;
+    }
+
+    setError("");
+    setForm((current) => ({ ...current, asset: nextFiles.asset, images: nextFiles.images }));
   }
 
   return (
@@ -1072,22 +1154,17 @@ function PublishView() {
           />
         </label>
         <label>
-          图片链接
-          <input
-            onChange={(event) => updateField("image_url", event.target.value)}
-            placeholder="https://...（可选，和上传文件二选一即可）"
-            type="url"
-            value={form.image_url}
-          />
-        </label>
-        <label>
           上传文件
           <input
             accept={WORK_FILE_ACCEPT}
             key={fileInputKey}
-            onChange={(event) => updateField("asset", event.target.files?.[0] ?? null)}
+            multiple
+            onChange={(event) => updateFiles(event.target.files)}
             type="file"
           />
+          <small>图片最多 10 张；PDF、MP4、WebM、MOV 一次上传 1 个，最大 500MB。</small>
+          {form.images.length > 0 && <small className="fileSummary">已选择 {form.images.length} 张图片</small>}
+          {form.asset && <small className="fileSummary">已选择文件：{form.asset.name}</small>}
           <small>支持图片、PDF、MP4、WebM、MOV，最大 500MB，提交时自动切片上传。</small>
         </label>
         <label>
@@ -1115,14 +1192,29 @@ function PublishView() {
 
 function ReviewView() {
   const [items, setItems] = useState([]);
+  const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [filters, setFilters] = useState({ type: "all", mediaType: "all", author: "", ordering: "latest" });
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [rejectingIds, setRejectingIds] = useState([]);
+  const [rejectReason, setRejectReason] = useState("");
+  const [previewWork, setPreviewWork] = useState(null);
+  const [processing, setProcessing] = useState(false);
 
   async function loadPending() {
     setLoading(true);
     setError("");
     try {
-      setItems(await api.pendingWorks());
+      const nextItems = await api.pendingWorks({
+        type: filters.type,
+        mediaType: filters.mediaType,
+        author: filters.author.trim(),
+        ordering: filters.ordering === "oldest" ? "oldest" : "latest",
+      });
+      setItems(nextItems);
+      setSelectedIds((current) => current.filter((id) => nextItems.some((item) => item.id === id)));
     } catch (reviewError) {
       setError(reviewError.message || "审核队列加载失败");
     } finally {
@@ -1130,23 +1222,116 @@ function ReviewView() {
     }
   }
 
+  async function loadReviewLogs() {
+    try {
+      setLogs(await api.reviewLogs());
+    } catch {
+      setLogs([]);
+    }
+  }
+
   useEffect(() => {
     loadPending();
+  }, [filters]);
+
+  useEffect(() => {
+    loadReviewLogs();
   }, []);
 
   async function approve(id) {
-    await api.approveWork(id);
-    await loadPending();
+    await reviewSingle(async () => api.approveWork(id), "已通过 1 个作品。");
   }
 
-  async function reject(id) {
-    const reason = window.prompt("请填写打回原因");
-    if (!reason?.trim()) {
+  async function reviewSingle(task, successText) {
+    setProcessing(true);
+    setError("");
+    setMessage("");
+    try {
+      await task();
+      setMessage(successText);
+      await Promise.all([loadPending(), loadReviewLogs()]);
+      notifyReviewQueueChanged();
+    } catch (reviewError) {
+      setError(reviewError.message || "审核操作失败");
+    } finally {
+      setProcessing(false);
+    }
+  }
+
+  async function approveSelected() {
+    if (selectedIds.length === 0) {
       return;
     }
-    await api.rejectWork(id, reason.trim());
-    await loadPending();
+    setProcessing(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await api.bulkReview({ action: "approve", ids: selectedIds });
+      setMessage(`已通过 ${result.reviewed_count} 个作品。`);
+      setSelectedIds([]);
+      await Promise.all([loadPending(), loadReviewLogs()]);
+      notifyReviewQueueChanged();
+    } catch (reviewError) {
+      setError(reviewError.message || "批量通过失败");
+    } finally {
+      setProcessing(false);
+    }
   }
+
+  function openReject(ids) {
+    setRejectingIds(ids);
+    setRejectReason("");
+    setError("");
+    setMessage("");
+  }
+
+  async function submitReject(event) {
+    event.preventDefault();
+    const reason = rejectReason.trim();
+    if (!reason || rejectingIds.length === 0) {
+      setError("请先选择打回作品并填写原因。");
+      return;
+    }
+
+    setProcessing(true);
+    setError("");
+    setMessage("");
+    try {
+      if (rejectingIds.length === 1) {
+        await api.rejectWork(rejectingIds[0], reason);
+        setMessage("已打回 1 个作品。");
+      } else {
+        const result = await api.bulkReview({ action: "reject", ids: rejectingIds, reject_reason: reason });
+        setMessage(`已打回 ${result.reviewed_count} 个作品。`);
+      }
+      setSelectedIds((current) => current.filter((id) => !rejectingIds.includes(id)));
+      setRejectingIds([]);
+      setRejectReason("");
+      await Promise.all([loadPending(), loadReviewLogs()]);
+      notifyReviewQueueChanged();
+    } catch (reviewError) {
+      setError(reviewError.message || "打回失败");
+    } finally {
+      setProcessing(false);
+    }
+  }
+
+  function toggleSelection(id) {
+    setSelectedIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
+  }
+
+  function toggleAll() {
+    if (selectedIds.length === items.length) {
+      setSelectedIds([]);
+      return;
+    }
+    setSelectedIds(items.map((item) => item.id));
+  }
+
+  const selectedItems = items.filter((item) => selectedIds.includes(item.id));
+  const aiCount = items.filter((item) => item.work_type === "ai").length;
+  const trainingCount = items.filter((item) => item.work_type === "training").length;
+  const riskyCount = items.filter((item) => getReviewRisks(item).length > 0).length;
 
   return (
     <section className="sectionPanel reviewScene">
@@ -1154,11 +1339,99 @@ function ReviewView() {
         <div className="panelTitle">
           <span>仅管理员可见</span>
           <h2>审核工作台</h2>
-          <p>集中预览待审作品，确认内容质量后通过或打回。</p>
+          <p>集中预览待审作品，先处理风险项，再批量完成审核。</p>
         </div>
         <img src={mascotUiSuccess} alt="" />
       </div>
+
+      <div className="reviewMetrics">
+        <strong>{items.length}<span>待处理</span></strong>
+        <strong>{selectedIds.length}<span>已选中</span></strong>
+        <strong>{riskyCount}<span>需关注</span></strong>
+        <strong>{aiCount}/{trainingCount}<span>AI/培训</span></strong>
+      </div>
+
+      <div className="reviewToolbar">
+        <label>
+          作品类型
+          <select value={filters.type} onChange={(event) => setFilters((current) => ({ ...current, type: event.target.value }))}>
+            <option value="all">全部类型</option>
+            <option value="ai">AI 作品</option>
+            <option value="training">培训作品</option>
+          </select>
+        </label>
+        <label>
+          文件类型
+          <select
+            value={filters.mediaType}
+            onChange={(event) => setFilters((current) => ({ ...current, mediaType: event.target.value }))}
+          >
+            <option value="all">全部文件</option>
+            <option value="image">图片</option>
+            <option value="pdf">PDF</option>
+            <option value="video">视频</option>
+            <option value="link">链接</option>
+          </select>
+        </label>
+        <label>
+          学员
+          <input
+            placeholder="搜索姓名或账号"
+            value={filters.author}
+            onChange={(event) => setFilters((current) => ({ ...current, author: event.target.value }))}
+          />
+        </label>
+        <label>
+          提交时间
+          <select
+            value={filters.ordering}
+            onChange={(event) => setFilters((current) => ({ ...current, ordering: event.target.value }))}
+          >
+            <option value="latest">最新优先</option>
+            <option value="oldest">最早优先</option>
+          </select>
+        </label>
+      </div>
+
+      <div className="reviewBatchBar">
+        <button disabled={items.length === 0} onClick={toggleAll} type="button">
+          {selectedIds.length === items.length && items.length > 0 ? "取消全选" : "全选本页"}
+        </button>
+        <button disabled={processing || selectedIds.length === 0} onClick={approveSelected} type="button">批量通过</button>
+        <button disabled={processing || selectedIds.length === 0} onClick={() => openReject(selectedIds)} type="button">批量打回</button>
+        <span>已选 {selectedIds.length} 个作品{selectedItems.length > 0 ? `：${selectedItems.map((item) => item.title).join("、")}` : ""}</span>
+      </div>
+
       {error && <p className="errorText">{error}</p>}
+      {message && <p className="successText">{message}</p>}
+
+      {rejectingIds.length > 0 && (
+        <form className="reviewRejectPanel" onSubmit={submitReject}>
+          <div>
+            <span>打回 {rejectingIds.length} 个作品</span>
+            <strong>选择原因模板或直接填写</strong>
+          </div>
+          <div className="rejectTemplateGrid">
+            {REVIEW_REJECT_TEMPLATES.map((template) => (
+              <button key={template} onClick={() => setRejectReason(template)} type="button">
+                {template}
+              </button>
+            ))}
+          </div>
+          <textarea
+            required
+            rows="3"
+            value={rejectReason}
+            onChange={(event) => setRejectReason(event.target.value)}
+            placeholder="请输入给学员看的打回原因"
+          />
+          <div className="reviewRejectActions">
+            <button disabled={processing} type="submit">确认打回</button>
+            <button disabled={processing} onClick={() => setRejectingIds([])} type="button">取消</button>
+          </div>
+        </form>
+      )}
+
       {loading ? (
         <div className="loadingCard">正在加载审核队列...</div>
       ) : items.length === 0 ? (
@@ -1167,25 +1440,138 @@ function ReviewView() {
         <div className="reviewList">
           {items.map((item) => (
             <article className="reviewCard" key={item.id}>
-              <div>
-                <span>{workTypeLabel(item)}</span>
+              <label className="reviewSelect">
+                <input checked={selectedIds.includes(item.id)} onChange={() => toggleSelection(item.id)} type="checkbox" />
+              </label>
+              <button className="reviewPreviewButton" onClick={() => setPreviewWork(item)} type="button">
+                <ReviewPreviewThumb work={item} />
+              </button>
+              <div className="reviewCardBody">
+                <div className="reviewCardMeta">
+                  <span>{workTypeLabel(item)}</span>
+                  <span>{mediaTypeLabel(item)}</span>
+                  <span>{formatWorkDate(item.created_at)} 提交</span>
+                </div>
                 <h3>{item.title}</h3>
                 <p>{item.author_name} 提交 · {item.description}</p>
-                {item.link && (
-                  <a className="workLink" href={item.link} rel="noreferrer" target="_blank">
-                    打开作品链接
-                  </a>
-                )}
+                <div className="reviewRiskList">
+                  {getReviewRisks(item).map((risk) => (
+                    <span key={risk}>{risk}</span>
+                  ))}
+                </div>
+                <div className="reviewLinks">
+                  {item.link && (
+                    <a className="workLink" href={item.link} rel="noreferrer" target="_blank">
+                      打开作品链接
+                    </a>
+                  )}
+                  {item.attachment && (
+                    <a className="workLink" href={item.attachment} rel="noreferrer" target="_blank">
+                      打开附件
+                    </a>
+                  )}
+                </div>
               </div>
               <div className="reviewActions">
-                <button onClick={() => approve(item.id)} type="button">通过</button>
-                <button onClick={() => reject(item.id)} type="button">打回</button>
+                <button disabled={processing} onClick={() => approve(item.id)} type="button">通过</button>
+                <button disabled={processing} onClick={() => openReject([item.id])} type="button">打回</button>
+                <button onClick={() => setPreviewWork(item)} type="button">预览</button>
               </div>
             </article>
           ))}
         </div>
       )}
+
+      <section className="reviewLogPanel">
+        <div className="panelTitle">
+          <span>审核日志</span>
+          <h2>最近操作</h2>
+        </div>
+        {logs.length === 0 ? (
+          <p>暂无审核记录。</p>
+        ) : (
+          <div className="reviewLogList">
+            {logs.slice(0, 8).map((log) => (
+              <article key={log.id}>
+                <strong>{log.action_label} · {log.work_title}</strong>
+                <span>{log.reviewer_name || log.reviewer_username || "管理员"} · {formatFullDate(log.created_at)}</span>
+                {log.reason && <p>{log.reason}</p>}
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {previewWork && <ReviewPreviewModal work={previewWork} onClose={() => setPreviewWork(null)} />}
     </section>
+  );
+}
+
+function ReviewPreviewThumb({ work }) {
+  const image = getWorkImage(work);
+  if (image) {
+    return <img src={image} alt={work.title} />;
+  }
+  return (
+    <span>
+      <strong>{mediaTypeLabel(work)}</strong>
+    </span>
+  );
+}
+
+function ReviewPreviewModal({ work, onClose }) {
+  const images = getWorkImages(work);
+  const image = images[0] || getWorkImage(work);
+  const attachment = work.attachment;
+  const risks = getReviewRisks(work);
+
+  return (
+    <div className="modalBackdrop" onClick={onClose}>
+      <article className="reviewPreviewModal" onClick={(event) => event.stopPropagation()}>
+        <div className="workDetailTop">
+          <button onClick={onClose} type="button">‹ 关闭</button>
+          <span>审核预览</span>
+        </div>
+        <div className="reviewPreviewGrid">
+          <div className="reviewPreviewMedia">
+            {work.media_type === "video" && attachment ? (
+              <video controls src={attachment} />
+            ) : work.media_type === "pdf" && attachment ? (
+              <iframe src={attachment} title={work.title} />
+            ) : images.length > 0 ? (
+              <div className={`workDetailGallery count${Math.min(images.length, 4)}`}>
+                {images.map((src, index) => (
+                  <img src={src} alt={`${work.title} ${index + 1}`} key={`${src}-${index}`} />
+                ))}
+              </div>
+            ) : image ? (
+              <img src={image} alt={work.title} />
+            ) : (
+              <div className="workDetailGenerated blue">
+                <span>{mediaTypeLabel(work)}</span>
+                <strong>{work.title}</strong>
+              </div>
+            )}
+          </div>
+          <div className="reviewPreviewInfo">
+            <div className="tagLine">
+              <span>{workTypeLabel(work)}</span>
+              <span>{mediaTypeLabel(work)}</span>
+              <span>{formatFileSize(work.file_size)}</span>
+            </div>
+            <h2>{work.title}</h2>
+            <p>{work.description}</p>
+            <div className="reviewRiskList">
+              {risks.length === 0 ? <span>未发现明显风险</span> : risks.map((risk) => <span key={risk}>{risk}</span>)}
+            </div>
+            <div className="workDetailLinks">
+              {work.link && <a href={work.link} rel="noreferrer" target="_blank">打开作品链接</a>}
+              {attachment && <a href={attachment} rel="noreferrer" target="_blank">打开附件</a>}
+            </div>
+          </div>
+        </div>
+      </article>
+    </div>
   );
 }
 
@@ -1258,8 +1644,8 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
       title: work.title,
       work_type: work.work_type,
       link: work.link || "",
-      image_url: work.image_url || "",
       asset: null,
+      images: [],
       description: work.description,
     });
     setMessage("");
@@ -1276,7 +1662,9 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
     setMessage("");
     setError("");
     try {
-      const uploadId = workDraft.asset ? await uploadWorkAsset(workDraft.asset, setWorkUploadProgress) : null;
+      const uploadId = workDraft.asset && workDraft.images.length === 0
+        ? await uploadWorkAsset(workDraft.asset, setWorkUploadProgress)
+        : null;
       await api.updateWork(editingWorkId, buildWorkFormData(workDraft, uploadId));
       await loadMyWorks();
       setEditingWorkId(null);
@@ -1293,6 +1681,19 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
 
   function updateWorkDraft(field, value) {
     setWorkDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateWorkFiles(fileList) {
+    const nextFiles = normalizeSelectedWorkFiles(fileList);
+    if (nextFiles.error) {
+      setError(nextFiles.error);
+      updateWorkDraft("asset", null);
+      updateWorkDraft("images", []);
+      return;
+    }
+
+    setError("");
+    setWorkDraft((current) => ({ ...current, asset: nextFiles.asset, images: nextFiles.images }));
   }
 
   const heat = myWorks.reduce((sum, work) => sum + scoreWork(work), 0);
@@ -1487,17 +1888,17 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
                 <input type="url" value={workDraft.link} onChange={(event) => updateWorkDraft("link", event.target.value)} />
               </label>
               <label>
-                图片链接
-                <input type="url" value={workDraft.image_url} onChange={(event) => updateWorkDraft("image_url", event.target.value)} />
-              </label>
-              <label>
                 重新上传文件
                 <input
                   accept={WORK_FILE_ACCEPT}
                   key={workFileInputKey}
-                  onChange={(event) => updateWorkDraft("asset", event.target.files?.[0] ?? null)}
+                  multiple
+                  onChange={(event) => updateWorkFiles(event.target.files)}
                   type="file"
                 />
+                <small>图片最多 10 张；PDF、MP4、WebM、MOV 一次上传 1 个，最大 500MB。</small>
+                {workDraft.images.length > 0 && <small className="fileSummary">已选择 {workDraft.images.length} 张图片</small>}
+                {workDraft.asset && <small className="fileSummary">已选择文件：{workDraft.asset.name}</small>}
                 <small>支持图片、PDF、MP4、WebM、MOV，最大 500MB。</small>
               </label>
               <label>
@@ -1572,6 +1973,12 @@ function AdminRail() {
     }
 
     loadPendingCount().catch(() => setPendingCount(0));
+    window.addEventListener("reviewQueueChanged", loadPendingCount);
+    const timer = window.setInterval(loadPendingCount, 15000);
+    return () => {
+      window.removeEventListener("reviewQueueChanged", loadPendingCount);
+      window.clearInterval(timer);
+    };
   }, []);
 
   return (
@@ -1588,6 +1995,10 @@ function AdminRail() {
       </section>
     </aside>
   );
+}
+
+function notifyReviewQueueChanged() {
+  window.dispatchEvent(new Event("reviewQueueChanged"));
 }
 
 function EmptyState({ title, text }) {
@@ -1619,6 +2030,22 @@ function formatWorkDate(value) {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
+function formatFullDate(value) {
+  if (!value) {
+    return "刚刚";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function formatTime(time) {
   return time?.slice(0, 5) ?? "";
 }
@@ -1639,10 +2066,24 @@ function mediaTypeLabel(work) {
 }
 
 function getWorkImage(work) {
+  const galleryImages = getWorkImages(work);
+  if (galleryImages.length > 0) {
+    return galleryImages[0];
+  }
   if (work.media_type === "image" && work.attachment) {
     return work.attachment;
   }
   return work.image || work.image_url || "";
+}
+
+function getWorkImages(work) {
+  if (!Array.isArray(work.images)) {
+    return [];
+  }
+
+  return work.images
+    .map((item) => (typeof item === "string" ? item : item?.image))
+    .filter(Boolean);
 }
 
 function genderLabel(value) {
@@ -1651,6 +2092,44 @@ function genderLabel(value) {
 
 function scoreWork(work) {
   return (work.like_count ?? 0) + (work.vote_count ?? 0);
+}
+
+function formatFileSize(size) {
+  const bytes = Number(size || 0);
+  if (!bytes) {
+    return "无文件";
+  }
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(bytes >= 100 * 1024 * 1024 ? 0 : 1)}MB`;
+  }
+  return `${Math.max(Math.round(bytes / 1024), 1)}KB`;
+}
+
+function getReviewRisks(work) {
+  const risks = [];
+  const hasFile = Boolean(work.attachment || work.image || getWorkImages(work).length > 0);
+  const hasLink = Boolean(work.link);
+
+  if (!hasFile && !hasLink) {
+    risks.push("缺少作品文件或链接");
+  }
+  if ((work.description || "").trim().length < 20) {
+    risks.push("介绍偏短");
+  }
+  if (work.media_type === "pdf" && !work.attachment) {
+    risks.push("PDF 附件缺失");
+  }
+  if (work.media_type === "video" && !work.attachment) {
+    risks.push("视频附件缺失");
+  }
+  if (work.file_size > 100 * 1024 * 1024) {
+    risks.push(`大文件 ${formatFileSize(work.file_size)}`);
+  }
+  if (hasLink) {
+    risks.push("需检查外部链接");
+  }
+
+  return risks;
 }
 
 async function uploadWorkAsset(file, onProgress) {
@@ -1695,16 +2174,52 @@ function guessContentType(fileName) {
   return "image/jpeg";
 }
 
+function isImageFile(file) {
+  const contentType = file.type || guessContentType(file.name);
+  return contentType.startsWith("image/");
+}
+
+function normalizeSelectedWorkFiles(fileList) {
+  const files = Array.from(fileList ?? []);
+  if (files.length === 0) {
+    return { asset: null, images: [] };
+  }
+
+  const imageFiles = files.filter(isImageFile);
+  const otherFiles = files.filter((file) => !isImageFile(file));
+
+  if (imageFiles.length > 0 && otherFiles.length > 0) {
+    return { error: "图片作品请只选择图片；PDF/视频请单独上传。" };
+  }
+
+  if (imageFiles.length > MAX_WORK_IMAGE_COUNT) {
+    return { error: `最多只能上传 ${MAX_WORK_IMAGE_COUNT} 张图片。` };
+  }
+
+  if (otherFiles.length > 1) {
+    return { error: "PDF 或视频一次只能上传 1 个文件。" };
+  }
+
+  const oversizedFile = files.find((file) => file.size > MAX_WORK_UPLOAD_BYTES);
+  if (oversizedFile) {
+    return { error: `${oversizedFile.name} 超过 500MB。` };
+  }
+
+  return { asset: otherFiles[0] ?? null, images: imageFiles };
+}
+
 function buildWorkFormData(work, uploadId = null) {
   const formData = new FormData();
   formData.append("title", work.title);
   formData.append("work_type", work.work_type);
   formData.append("link", work.link || "");
-  formData.append("image_url", work.image_url || "");
   formData.append("description", work.description);
   if (uploadId) {
     formData.append("upload_id", uploadId);
   }
+  (work.images || []).forEach((image) => {
+    formData.append("images", image);
+  });
   return formData;
 }
 

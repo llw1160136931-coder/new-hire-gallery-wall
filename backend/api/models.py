@@ -103,6 +103,46 @@ class Work(models.Model):
         return self.title
 
 
+class WorkImage(models.Model):
+    work = models.ForeignKey(Work, on_delete=models.CASCADE, related_name='gallery_images')
+    image = models.ImageField(upload_to='works/gallery/')
+    order = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['order', 'id']
+        constraints = [
+            models.UniqueConstraint(fields=['work', 'order'], name='unique_work_image_order'),
+        ]
+
+    def __str__(self):
+        return f'{self.work_id}:{self.order}'
+
+
+class WorkReviewLog(models.Model):
+    class Action(models.TextChoices):
+        APPROVE = 'approve', '通过'
+        REJECT = 'reject', '打回'
+
+    work = models.ForeignKey(Work, on_delete=models.CASCADE, related_name='review_logs')
+    reviewer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='work_review_logs',
+        blank=True,
+        null=True,
+    )
+    action = models.CharField(max_length=20, choices=Action.choices)
+    reason = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.work_id}:{self.action}'
+
+
 class ChunkedUpload(models.Model):
     class Status(models.TextChoices):
         UPLOADING = 'uploading', '上传中'

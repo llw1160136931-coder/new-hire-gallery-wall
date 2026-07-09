@@ -137,7 +137,17 @@ export const api = {
   courses: (date) => apiRequest(date ? `/courses/?date=${date}` : "/courses/"),
   works: (type) => apiRequest(type && type !== "all" ? `/works/?type=${type}` : "/works/"),
   myWorks: () => apiRequest("/works/my/"),
-  pendingWorks: () => apiRequest("/works/pending/"),
+  pendingWorks: (filters = {}) => {
+    const query = new URLSearchParams();
+    if (filters.type && filters.type !== "all") query.set("type", filters.type);
+    if (filters.mediaType && filters.mediaType !== "all") query.set("media_type", filters.mediaType);
+    if (filters.author) query.set("author", filters.author);
+    if (filters.ordering) query.set("ordering", filters.ordering);
+    const suffix = query.toString();
+    return apiRequest(`/works/pending/${suffix ? `?${suffix}` : ""}`);
+  },
+  reviewLogs: () => apiRequest("/works/review-logs/"),
+  bulkReview: (payload) => apiRequest("/works/bulk-review/", { method: "POST", body: payload }),
   leaderboard: () => apiRequest("/leaderboard/"),
   search: (keyword) => apiRequest(`/search/?q=${encodeURIComponent(keyword)}`),
   initUpload: (payload) => apiRequest("/uploads/init/", { method: "POST", body: payload }),

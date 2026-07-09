@@ -3,6 +3,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.core.files import File
+from django.db import IntegrityError, transaction
 from django.db.models import Count, F, Q
 from django.utils import timezone
 from django.utils.text import get_valid_filename
@@ -11,31 +12,33 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import ChunkedUpload, Course, Like, Profile, Work, Vote
+from .models import ChunkedUpload, Course, Like, Profile, Work, Vote, WorkReviewLog
 from .permissions import IsAdminRole
 from .serializers import (
+    BulkReviewSerializer,
     CourseSerializer,
     LeaderboardSerializer,
     ProfileSerializer,
     PublicProfileSerializer,
-    RegisterSerializer,
     ReviewSerializer,
     WorkSerializer,
+    WorkReviewLogSerializer,
     media_type_from_content_type,
 )
 
 
 MAX_WORK_UPLOAD_SIZE = 500 * 1024 * 1024
+MAX_VOTES_PER_USER = 5
 
 
 class RegisterView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        serializer = RegisterSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(
+            {'detail': 'Registration is disabled. Please contact the administrator.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
 
 class MeView(APIView):
@@ -74,7 +77,7 @@ class WorkViewSet(viewsets.ModelViewSet):
     parser_classes = [parsers.JSONParser, parsers.FormParser, parsers.MultiPartParser]
 
     def get_permissions(self):
-        if self.action in ['approve', 'reject', 'pending']:
+        if self.action in ['approve', 'reject', 'pending', 'bulk_review', 'review_logs']:
             return [IsAdminRole()]
         if self.action in ['create', 'like', 'vote', 'my', 'update', 'partial_update', 'destroy']:
             return [permissions.IsAuthenticated()]
@@ -92,6 +95,22 @@ class WorkViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(author=self.request.user)
         if self.action == 'pending':
             queryset = queryset.filter(status=Work.Status.PENDING)
+            work_type = self.request.query_params.get('type')
+            media_type = self.request.query_params.get('media_type')
+            author = self.request.query_params.get('author')
+            ordering = self.request.query_params.get('ordering')
+            if work_type:
+                queryset = queryset.filter(work_type=work_type)
+            if media_type:
+                queryset = queryset.filter(media_type=media_type)
+            if author:
+                queryset = queryset.filter(
+                    Q(author__profile__name__icontains=author) | Q(author__username__icontains=author)
+                )
+            if ordering == 'oldest':
+                queryset = queryset.order_by('created_at')
+            else:
+                queryset = queryset.order_by('-created_at')
         return queryset
 
     def perform_create(self, serializer):
@@ -133,11 +152,7 @@ class WorkViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         work = self.get_object()
-        work.status = Work.Status.APPROVED
-        work.reject_reason = ''
-        work.reviewed_by = request.user
-        work.reviewed_at = timezone.now()
-        work.save(update_fields=['status', 'reject_reason', 'reviewed_by', 'reviewed_at', 'updated_at'])
+        self._review_work(work, request.user, WorkReviewLog.Action.APPROVE)
         return Response(self.get_serializer(work).data)
 
     @action(detail=True, methods=['post'])
@@ -148,24 +163,142 @@ class WorkViewSet(viewsets.ModelViewSet):
         if not reject_reason:
             return Response({'reject_reason': '打回时必须填写原因'}, status=status.HTTP_400_BAD_REQUEST)
         work = self.get_object()
-        work.status = Work.Status.REJECTED
-        work.reject_reason = reject_reason
-        work.reviewed_by = request.user
+        self._review_work(work, request.user, WorkReviewLog.Action.REJECT, reject_reason)
+        return Response(self.get_serializer(work).data)
+
+    @action(detail=False, methods=['post'], url_path='bulk-review')
+    def bulk_review(self, request):
+        serializer = BulkReviewSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        action_name = serializer.validated_data['action']
+        reject_reason = serializer.validated_data.get('reject_reason', '').strip()
+        if action_name == WorkReviewLog.Action.REJECT and not reject_reason:
+            return Response({'reject_reason': '批量打回时必须填写原因'}, status=status.HTTP_400_BAD_REQUEST)
+
+        ids = serializer.validated_data['ids']
+        works = list(Work.objects.filter(id__in=ids, status=Work.Status.PENDING))
+        found_ids = {work.id for work in works}
+        missing_ids = [work_id for work_id in ids if work_id not in found_ids]
+
+        with transaction.atomic():
+            for work in works:
+                self._review_work(work, request.user, action_name, reject_reason)
+
+        return Response({
+            'reviewed_count': len(works),
+            'missing_ids': missing_ids,
+            'action': action_name,
+        })
+
+    @action(detail=False, methods=['get'], url_path='review-logs')
+    def review_logs(self, request):
+        queryset = WorkReviewLog.objects.select_related('work__author__profile', 'reviewer__profile', 'reviewer')
+        work_id = request.query_params.get('work')
+        if work_id:
+            queryset = queryset.filter(work_id=work_id)
+        serializer = WorkReviewLogSerializer(queryset[:50], many=True)
+        return Response(serializer.data)
+
+    def _review_work(self, work, reviewer, action_name, reject_reason=''):
+        if action_name == WorkReviewLog.Action.APPROVE:
+            work.status = Work.Status.APPROVED
+            work.reject_reason = ''
+        else:
+            work.status = Work.Status.REJECTED
+            work.reject_reason = reject_reason
+
+        work.reviewed_by = reviewer
         work.reviewed_at = timezone.now()
         work.save(update_fields=['status', 'reject_reason', 'reviewed_by', 'reviewed_at', 'updated_at'])
-        return Response(self.get_serializer(work).data)
+        WorkReviewLog.objects.create(
+            work=work,
+            reviewer=reviewer,
+            action=action_name,
+            reason=reject_reason if action_name == WorkReviewLog.Action.REJECT else '',
+        )
 
     @action(detail=True, methods=['post'])
     def like(self, request, pk=None):
         work = self.get_object()
-        Like.objects.get_or_create(user=request.user, work=work)
-        return Response({'detail': 'liked'}, status=status.HTTP_200_OK)
+        try:
+            with transaction.atomic():
+                Like.objects.create(user=request.user, work=work)
+        except IntegrityError:
+            return Response(
+                {
+                    'detail': '你已经点赞过这个作品',
+                    **self._interaction_state(work, request.user),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            {
+                'detail': '点赞成功',
+                **self._interaction_state(work, request.user),
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
     @action(detail=True, methods=['post'])
     def vote(self, request, pk=None):
         work = self.get_object()
-        Vote.objects.get_or_create(user=request.user, work=work)
-        return Response({'detail': 'voted'}, status=status.HTTP_200_OK)
+        with transaction.atomic():
+            request.user.__class__.objects.select_for_update().get(pk=request.user.pk)
+
+            if Vote.objects.filter(user=request.user, work=work).exists():
+                return Response(
+                    {
+                        'detail': '你已经给这个作品投过票',
+                        **self._interaction_state(work, request.user),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            used_votes = Vote.objects.filter(user=request.user).count()
+            if used_votes >= MAX_VOTES_PER_USER:
+                return Response(
+                    {
+                        'detail': '每位学员最多只能投 5 票',
+                        **self._interaction_state(work, request.user),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            try:
+                with transaction.atomic():
+                    Vote.objects.create(user=request.user, work=work)
+            except IntegrityError:
+                return Response(
+                    {
+                        'detail': '你已经给这个作品投过票',
+                        **self._interaction_state(work, request.user),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        remaining_votes = max(MAX_VOTES_PER_USER - Vote.objects.filter(user=request.user).count(), 0)
+        return Response(
+            {
+                'detail': f'投票成功，还剩 {remaining_votes} 票',
+                **self._interaction_state(work, request.user),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    def _interaction_state(self, work, user):
+        refreshed_work = self.get_serializer(
+            WorkSerializer.setup_eager_loading(Work.objects.filter(pk=work.pk)).get()
+        ).data
+        used_votes = Vote.objects.filter(user=user).count()
+        return {
+            'work': refreshed_work,
+            'liked': Like.objects.filter(user=user, work=work).exists(),
+            'voted': Vote.objects.filter(user=user, work=work).exists(),
+            'used_votes': used_votes,
+            'remaining_votes': max(MAX_VOTES_PER_USER - used_votes, 0),
+            'max_votes': MAX_VOTES_PER_USER,
+        }
 
 
 class LeaderboardView(APIView):

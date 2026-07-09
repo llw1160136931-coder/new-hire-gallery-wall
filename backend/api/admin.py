@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import ChunkedUpload, Course, Like, Profile, Vote, Work
+from .models import ChunkedUpload, Course, Like, Profile, Vote, Work, WorkImage, WorkReviewLog
 
 
 @admin.register(Profile)
@@ -22,6 +22,17 @@ class WorkAdmin(admin.ModelAdmin):
     list_display = ['title', 'author', 'work_type', 'media_type', 'status', 'file_size', 'created_at', 'reviewed_at']
     list_filter = ['work_type', 'media_type', 'status']
     search_fields = ['title', 'description', 'author__username', 'author__profile__name']
+    inlines = []
+
+
+class WorkImageInline(admin.TabularInline):
+    model = WorkImage
+    extra = 0
+    fields = ['image', 'order', 'created_at']
+    readonly_fields = ['created_at']
+
+
+WorkAdmin.inlines = [WorkImageInline]
 
 
 @admin.register(ChunkedUpload)
@@ -30,6 +41,14 @@ class ChunkedUploadAdmin(admin.ModelAdmin):
     list_filter = ['media_type', 'status']
     search_fields = ['file_name', 'owner__username']
     readonly_fields = ['upload_id', 'uploaded_chunks', 'created_at', 'updated_at']
+
+
+@admin.register(WorkReviewLog)
+class WorkReviewLogAdmin(admin.ModelAdmin):
+    list_display = ['work', 'reviewer', 'action', 'created_at']
+    list_filter = ['action', 'created_at']
+    search_fields = ['work__title', 'reviewer__username', 'reason']
+    readonly_fields = ['work', 'reviewer', 'action', 'reason', 'created_at']
 
 
 admin.site.register(Like)
