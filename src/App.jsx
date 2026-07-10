@@ -1161,6 +1161,15 @@ function PublishView({ camp }) {
           </select>
         </label>
         <label>
+          作品标签
+          <input
+            onChange={(event) => updateField("tags", event.target.value)}
+            placeholder="例如：AI 海报，流程 Demo（最多 5 个）"
+            value={form.tags}
+          />
+          <small>用逗号、顿号或换行分隔，每个标签最多 20 个字符。</small>
+        </label>
+        <label>
           作品链接
           <input
             onChange={(event) => updateField("link", event.target.value)}
@@ -1375,15 +1384,6 @@ function ReviewView() {
             <option value="ai">AI 作品</option>
             <option value="training">培训作品</option>
           </select>
-        </label>
-        <label>
-          作品标签
-          <input
-            onChange={(event) => updateField("tags", event.target.value)}
-            placeholder="例如：AI 海报，流程 Demo（最多 5 个）"
-            value={form.tags}
-          />
-          <small>用逗号、顿号或换行分隔，每个标签最多 20 个字符。</small>
         </label>
         <label>
           文件类型
