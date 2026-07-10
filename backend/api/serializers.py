@@ -1,12 +1,31 @@
+import json
+import re
+
 from django.contrib.auth.models import User
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Count
+from django.utils import timezone
+from PIL import Image, UnidentifiedImageError
 from rest_framework import serializers
 
-from .models import ChunkedUpload, Course, Like, Profile, Vote, Work, WorkImage, WorkReviewLog
+from .models import (
+    ChunkedUpload,
+    Course,
+    Like,
+    Profile,
+    Tag,
+    TrainingCamp,
+    Vote,
+    Work,
+    WorkImage,
+    WorkReviewLog,
+    normalize_tag_name,
+)
 
 
 MAX_WORK_IMAGES = 10
+MAX_WORK_TAGS = 5
 
 
 ALLOWED_ATTACHMENT_TYPES = {
@@ -27,6 +46,61 @@ def media_type_from_content_type(content_type):
 
 def is_image_content_type(content_type):
     return media_type_from_content_type(content_type) == Work.MediaType.IMAGE
+
+
+def validate_file_signature(uploaded_file, content_type):
+    try:
+        uploaded_file.seek(0)
+        header = uploaded_file.read(32)
+        uploaded_file.seek(0)
+        if is_image_content_type(content_type):
+            with Image.open(uploaded_file) as image:
+                image.verify()
+            uploaded_file.seek(0)
+            return True
+        if content_type == 'application/pdf':
+            return header.startswith(b'%PDF-')
+        if content_type == 'video/webm':
+            return header.startswith(b'\x1a\x45\xdf\xa3')
+        if content_type in {'video/mp4', 'video/quicktime'}:
+            return b'ftyp' in header[4:16]
+    except (OSError, UnidentifiedImageError, ValueError):
+        pass
+    finally:
+        try:
+            uploaded_file.seek(0)
+        except (AttributeError, OSError):
+            pass
+    return False
+
+
+class TrainingCampSerializer(serializers.ModelSerializer):
+    training_dates = serializers.SerializerMethodField()
+    submission_open = serializers.SerializerMethodField()
+    voting_open = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TrainingCamp
+        fields = [
+            'id', 'name', 'slug', 'start_date', 'end_date',
+            'submission_starts_at', 'submission_ends_at',
+            'voting_starts_at', 'voting_ends_at', 'vote_limit',
+            'is_active', 'training_dates', 'submission_open', 'voting_open',
+        ]
+
+    def get_training_dates(self, obj):
+        return list(obj.courses.order_by('date').values_list('date', flat=True).distinct())
+
+    def get_submission_open(self, obj):
+        return self.is_in_window(obj.submission_starts_at, obj.submission_ends_at)
+
+    def get_voting_open(self, obj):
+        return self.is_in_window(obj.voting_starts_at, obj.voting_ends_at)
+
+    @staticmethod
+    def is_in_window(starts_at, ends_at):
+        now = timezone.now()
+        return (not starts_at or starts_at <= now) and (not ends_at or now <= ends_at)
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -73,12 +147,14 @@ class ProfileSerializer(serializers.ModelSerializer):
 
 
 class CourseSerializer(serializers.ModelSerializer):
-    status_label = serializers.CharField(source='get_status_display', read_only=True)
+    status = serializers.SerializerMethodField()
+    status_label = serializers.SerializerMethodField()
 
     class Meta:
         model = Course
         fields = [
             'id',
+            'camp',
             'title',
             'topic',
             'teacher',
@@ -91,12 +167,66 @@ class CourseSerializer(serializers.ModelSerializer):
             'status_label',
             'sort_order',
         ]
+        read_only_fields = ['camp']
+
+    def get_status(self, obj):
+        now = timezone.localtime()
+        if obj.date < now.date() or (obj.date == now.date() and obj.end_time <= now.time()):
+            return Course.Status.DONE
+        if obj.date == now.date() and obj.start_time <= now.time() < obj.end_time:
+            return Course.Status.LIVE
+        return Course.Status.UPCOMING
+
+    def get_status_label(self, obj):
+        return dict(Course.Status.choices)[self.get_status(obj)]
 
 
 class WorkImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = WorkImage
         fields = ['id', 'image', 'order']
+
+
+class TagListField(serializers.Field):
+    def to_internal_value(self, data):
+        if isinstance(data, str):
+            try:
+                parsed = json.loads(data)
+            except json.JSONDecodeError:
+                parsed = re.split(r'[,，、\n]+', data)
+            data = parsed if isinstance(parsed, list) else [parsed]
+        if not isinstance(data, list):
+            raise serializers.ValidationError('标签格式不正确')
+
+        names = []
+        seen = set()
+        for value in data:
+            if not isinstance(value, str):
+                raise serializers.ValidationError('标签必须是文本')
+            name = value.strip().lstrip('#').strip()
+            if not name:
+                continue
+            if len(name) > 20:
+                raise serializers.ValidationError('单个标签不能超过 20 个字符')
+            normalized = normalize_tag_name(name)
+            if normalized not in seen:
+                seen.add(normalized)
+                names.append(name)
+        if len(names) > MAX_WORK_TAGS:
+            raise serializers.ValidationError(f'每个作品最多添加 {MAX_WORK_TAGS} 个标签')
+        return names
+
+    def to_representation(self, value):
+        tags = value.all() if hasattr(value, 'all') else value
+        return [tag.name for tag in tags]
+
+
+class PopularTagSerializer(serializers.ModelSerializer):
+    work_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Tag
+        fields = ['id', 'name', 'work_count']
 
 
 class WorkSerializer(serializers.ModelSerializer):
@@ -109,11 +239,15 @@ class WorkSerializer(serializers.ModelSerializer):
     vote_count = serializers.IntegerField(read_only=True)
     upload_id = serializers.UUIDField(write_only=True, required=False)
     images = WorkImageSerializer(source='gallery_images', many=True, read_only=True)
+    camp_name = serializers.CharField(source='camp.name', read_only=True)
+    tags = TagListField(required=False)
 
     class Meta:
         model = Work
         fields = [
             'id',
+            'camp',
+            'camp_name',
             'author',
             'author_name',
             'author_avatar',
@@ -132,6 +266,7 @@ class WorkSerializer(serializers.ModelSerializer):
             'upload_id',
             'link',
             'description',
+            'tags',
             'status',
             'status_label',
             'reject_reason',
@@ -143,6 +278,7 @@ class WorkSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = [
+            'camp',
             'author',
             'status',
             'reject_reason',
@@ -173,7 +309,10 @@ class WorkSerializer(serializers.ModelSerializer):
             upload = ChunkedUpload.objects.filter(
                 upload_id=upload_id,
                 owner=request.user,
+                camp=TrainingCamp.get_active(),
                 status=ChunkedUpload.Status.COMPLETED,
+                consumed_at__isnull=True,
+                expires_at__gt=timezone.now(),
             ).first()
             if not upload:
                 raise serializers.ValidationError({'upload_id': '上传文件不存在或尚未合并完成'})
@@ -185,6 +324,8 @@ class WorkSerializer(serializers.ModelSerializer):
             content_type = getattr(uploaded_image, 'content_type', '')
             if not is_image_content_type(content_type):
                 raise serializers.ValidationError({'images': '多图上传只支持 JPG、PNG、GIF 或 WebP 图片'})
+            if not validate_file_signature(uploaded_image, content_type):
+                raise serializers.ValidationError({'images': '图片内容与文件类型不匹配或文件已损坏'})
 
         if gallery_images:
             self.context['gallery_images'] = gallery_images
@@ -197,6 +338,8 @@ class WorkSerializer(serializers.ModelSerializer):
             content_type = getattr(uploaded_file, 'content_type', '')
             if not media_type_from_content_type(content_type):
                 raise serializers.ValidationError({'attachment': '仅支持图片、PDF、MP4、WebM 和 MOV 视频'})
+            if not validate_file_signature(uploaded_file, content_type):
+                raise serializers.ValidationError({'attachment': '文件内容与声明类型不匹配或文件已损坏'})
 
         return attrs
 
@@ -208,21 +351,54 @@ class WorkSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         validated_data.pop('upload_id', None)
+        tag_names = validated_data.pop('tags', None)
         chunked_upload = self.context.get('chunked_upload')
         gallery_images = self.context.get('gallery_images')
-        instance = super().create(validated_data)
-        self.apply_attachment_metadata(instance, chunked_upload)
-        self.apply_gallery_images(instance, gallery_images)
+        with transaction.atomic():
+            self.claim_chunked_upload(chunked_upload)
+            instance = super().create(validated_data)
+            self.apply_tags(instance, tag_names)
+            self.apply_attachment_metadata(instance, chunked_upload)
+            self.apply_gallery_images(instance, gallery_images)
         return instance
 
     def update(self, instance, validated_data):
         validated_data.pop('upload_id', None)
+        tag_names = validated_data.pop('tags', None)
         chunked_upload = self.context.get('chunked_upload')
         gallery_images = self.context.get('gallery_images')
-        instance = super().update(instance, validated_data)
-        self.apply_attachment_metadata(instance, chunked_upload)
-        self.apply_gallery_images(instance, gallery_images)
+        with transaction.atomic():
+            self.claim_chunked_upload(chunked_upload)
+            instance = super().update(instance, validated_data)
+            self.apply_tags(instance, tag_names)
+            self.apply_attachment_metadata(instance, chunked_upload)
+            self.apply_gallery_images(instance, gallery_images)
         return instance
+
+    @staticmethod
+    def apply_tags(instance, tag_names):
+        if tag_names is None:
+            return
+        tags = []
+        for name in tag_names:
+            tag, _ = Tag.objects.get_or_create(
+                normalized_name=normalize_tag_name(name),
+                defaults={'name': name},
+            )
+            tags.append(tag)
+        instance.tags.set(tags)
+
+    @staticmethod
+    def claim_chunked_upload(chunked_upload):
+        if not chunked_upload:
+            return
+        claimed = ChunkedUpload.objects.filter(
+            pk=chunked_upload.pk,
+            status=ChunkedUpload.Status.COMPLETED,
+            consumed_at__isnull=True,
+        ).update(status=ChunkedUpload.Status.CONSUMED, consumed_at=timezone.now())
+        if not claimed:
+            raise serializers.ValidationError({'upload_id': '上传文件已经被使用，请重新上传'})
 
     def apply_gallery_images(self, instance, gallery_images=None):
         if gallery_images is None:
@@ -280,7 +456,7 @@ class WorkSerializer(serializers.ModelSerializer):
 
     @staticmethod
     def setup_eager_loading(queryset):
-        return queryset.select_related('author__profile').prefetch_related('gallery_images').annotate(
+        return queryset.select_related('author__profile', 'camp').prefetch_related('gallery_images', 'tags').annotate(
             like_count=Count('likes', distinct=True),
             vote_count=Count('votes', distinct=True),
         )

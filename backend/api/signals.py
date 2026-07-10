@@ -7,7 +7,7 @@ from .models import Profile
 
 @receiver(post_save, sender=User)
 def ensure_profile(sender, instance, created, **kwargs):
-    if created:
+    if created and not kwargs.get('raw'):
         role = Profile.Role.ADMIN if instance.is_staff else Profile.Role.STUDENT
         Profile.objects.get_or_create(
             user=instance,

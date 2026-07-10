@@ -1,7 +1,66 @@
 import uuid
+import unicodedata
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q
+
+
+class TrainingCamp(models.Model):
+    name = models.CharField(max_length=120)
+    slug = models.SlugField(max_length=80, unique=True)
+    start_date = models.DateField()
+    end_date = models.DateField()
+    submission_starts_at = models.DateTimeField(blank=True, null=True)
+    submission_ends_at = models.DateTimeField(blank=True, null=True)
+    voting_starts_at = models.DateTimeField(blank=True, null=True)
+    voting_ends_at = models.DateTimeField(blank=True, null=True)
+    vote_limit = models.PositiveSmallIntegerField(default=5)
+    is_active = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-start_date', '-id']
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(end_date__gte=models.F('start_date')),
+                name='training_camp_end_after_start',
+            ),
+            models.UniqueConstraint(
+                fields=['is_active'],
+                condition=Q(is_active=True),
+                name='single_active_training_camp',
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+    def clean(self):
+        errors = {}
+        if self.end_date and self.start_date and self.end_date < self.start_date:
+            errors['end_date'] = '结束日期不能早于开始日期'
+        for starts_field, ends_field in [
+            ('submission_starts_at', 'submission_ends_at'),
+            ('voting_starts_at', 'voting_ends_at'),
+        ]:
+            starts_at = getattr(self, starts_field)
+            ends_at = getattr(self, ends_field)
+            if starts_at and ends_at and ends_at < starts_at:
+                errors[ends_field] = '结束时间不能早于开始时间'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self.is_active:
+            TrainingCamp.objects.exclude(pk=self.pk).filter(is_active=True).update(is_active=False)
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def get_active(cls):
+        return cls.objects.filter(is_active=True).first()
 
 
 class Profile(models.Model):
@@ -37,6 +96,7 @@ class Course(models.Model):
         LIVE = 'live', '进行中'
         UPCOMING = 'upcoming', '未开始'
 
+    camp = models.ForeignKey(TrainingCamp, on_delete=models.PROTECT, related_name='courses')
     title = models.CharField(max_length=120)
     topic = models.CharField(max_length=120, blank=True)
     teacher = models.CharField(max_length=80)
@@ -51,8 +111,39 @@ class Course(models.Model):
     class Meta:
         ordering = ['date', 'start_time', 'sort_order']
 
+    def save(self, *args, **kwargs):
+        if not self.camp_id:
+            self.camp = TrainingCamp.get_active()
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f'{self.date} {self.title}'
+
+
+def normalize_tag_name(value):
+    return unicodedata.normalize('NFKC', value).strip().lstrip('#').strip().casefold()
+
+
+class Tag(models.Model):
+    name = models.CharField(max_length=20)
+    normalized_name = models.CharField(max_length=20, unique=True, editable=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def clean(self):
+        self.name = self.name.strip().lstrip('#').strip()
+        if not self.name:
+            raise ValidationError({'name': '标签不能为空'})
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        self.normalized_name = normalize_tag_name(self.name)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.name
 
 
 class Work(models.Model):
@@ -71,6 +162,7 @@ class Work(models.Model):
         VIDEO = 'video', '视频'
         LINK = 'link', '链接'
 
+    camp = models.ForeignKey(TrainingCamp, on_delete=models.PROTECT, related_name='works')
     author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='works')
     title = models.CharField(max_length=120)
     work_type = models.CharField(max_length=20, choices=WorkType.choices)
@@ -83,6 +175,7 @@ class Work(models.Model):
     file_size = models.PositiveBigIntegerField(default=0)
     link = models.URLField(blank=True)
     description = models.TextField()
+    tags = models.ManyToManyField(Tag, related_name='works', blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     reject_reason = models.TextField(blank=True)
     reviewed_by = models.ForeignKey(
@@ -98,6 +191,11 @@ class Work(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if not self.camp_id:
+            self.camp = TrainingCamp.get_active()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.title
@@ -147,8 +245,10 @@ class ChunkedUpload(models.Model):
     class Status(models.TextChoices):
         UPLOADING = 'uploading', '上传中'
         COMPLETED = 'completed', '已完成'
+        CONSUMED = 'consumed', '已使用'
 
     upload_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    camp = models.ForeignKey(TrainingCamp, on_delete=models.PROTECT, related_name='uploads')
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='chunked_uploads')
     file_name = models.CharField(max_length=255)
     content_type = models.CharField(max_length=120)
@@ -157,7 +257,11 @@ class ChunkedUpload(models.Model):
     total_chunks = models.PositiveIntegerField()
     uploaded_chunks = models.JSONField(default=list)
     file = models.FileField(upload_to='works/files/', blank=True, null=True)
+    expected_sha256 = models.CharField(max_length=64, blank=True)
+    sha256 = models.CharField(max_length=64, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.UPLOADING)
+    expires_at = models.DateTimeField()
+    consumed_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

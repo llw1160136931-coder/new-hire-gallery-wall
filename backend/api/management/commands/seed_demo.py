@@ -3,7 +3,7 @@ from datetime import date, time
 from django.contrib.auth.models import User
 from django.core.management.base import BaseCommand
 
-from api.models import Course, Profile, Work
+from api.models import Course, Profile, Tag, TrainingCamp, Work, normalize_tag_name
 
 
 class Command(BaseCommand):
@@ -12,8 +12,9 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         admin = self.ensure_user('admin', 'Admin12345', '审核管理员', Profile.Role.ADMIN, is_staff=True)
         student = self.ensure_user('student', 'Student12345', '新员工', Profile.Role.STUDENT)
-        self.seed_courses()
-        self.seed_works(student, admin)
+        camp = self.ensure_camp()
+        self.seed_courses(camp)
+        self.seed_works(camp, student, admin)
         self.stdout.write(self.style.SUCCESS('Demo data ready.'))
         self.stdout.write('Admin login: admin / Admin12345')
         self.stdout.write('Student login: student / Student12345')
@@ -35,7 +36,18 @@ class Command(BaseCommand):
         profile.save()
         return user
 
-    def seed_courses(self):
+    def ensure_camp(self):
+        camp = TrainingCamp.get_active()
+        if not camp:
+            camp = TrainingCamp(slug='new-hire-2026', is_active=True)
+        camp.name = '2026 新员工训练营'
+        camp.start_date = date(2026, 7, 19)
+        camp.end_date = date(2026, 7, 24)
+        camp.vote_limit = 5
+        camp.save()
+        return camp
+
+    def seed_courses(self, camp):
         rows = [
             ('2026-07-19', time(14, 0), time(14, 0), '新员工报到', '电信大厦3楼大会议室', '报到', '报到', '——'),
             ('2026-07-19', time(14, 0), time(14, 40), '新员工报到', '电信大厦3楼大会议室', '团队建设', '介绍培训整体安排、学员分组、团队组建。', '工作人员'),
@@ -70,9 +82,10 @@ class Command(BaseCommand):
             ('2026-07-24', time(15, 30), time(16, 10), '优秀代表经验分享', '白云学堂', '优秀员工代表经验分享', '员工代表：如何成长为技能人才', '增城分公司智云支局吴浅灿'),
             ('2026-07-24', time(16, 10), time(16, 50), '优秀代表经验分享', '白云学堂', '优秀员工代表经验分享', '员工代表：“从新人到熟手”的心路历程', '战新中心李星颖'),
         ]
-        Course.objects.all().delete()
+        camp.courses.all().delete()
         for index, (day, start, end, topic, room, title, content, teacher) in enumerate(rows):
             Course.objects.update_or_create(
+                camp=camp,
                 date=date.fromisoformat(day),
                 start_time=start,
                 title=title,
@@ -87,14 +100,15 @@ class Command(BaseCommand):
                 },
             )
 
-    def seed_works(self, student, admin):
+    def seed_works(self, camp, student, admin):
         works = [
-            ('AI 入职欢迎海报', Work.WorkType.AI, Work.Status.APPROVED, '用 AI 生成视觉草图，再结合培训关键词完成新人欢迎海报。'),
-            ('培训流程小程序原型', Work.WorkType.TRAINING, Work.Status.APPROVED, '覆盖签到、任务提交、课程提醒和作品投票的轻量原型。'),
-            ('部门知识地图', Work.WorkType.TRAINING, Work.Status.PENDING, '把部门职责、协作对象和常用系统整理成一张上手地图。'),
+            ('AI 入职欢迎海报', Work.WorkType.AI, Work.Status.APPROVED, '用 AI 生成视觉草图，再结合培训关键词完成新人欢迎海报。', ['AI 海报']),
+            ('培训流程小程序原型', Work.WorkType.TRAINING, Work.Status.APPROVED, '覆盖签到、任务提交、课程提醒和作品投票的轻量原型。', ['流程 Demo']),
+            ('部门知识地图', Work.WorkType.TRAINING, Work.Status.PENDING, '把部门职责、协作对象和常用系统整理成一张上手地图。', ['知识地图']),
         ]
-        for title, work_type, status, description in works:
-            Work.objects.update_or_create(
+        for title, work_type, status, description, tag_names in works:
+            work, _ = Work.objects.update_or_create(
+                camp=camp,
                 author=student,
                 title=title,
                 defaults={
@@ -105,3 +119,11 @@ class Command(BaseCommand):
                     'reviewed_by': admin if status == Work.Status.APPROVED else None,
                 },
             )
+            tags = [
+                Tag.objects.get_or_create(
+                    normalized_name=normalize_tag_name(name),
+                    defaults={'name': name},
+                )[0]
+                for name in tag_names
+            ]
+            work.tags.set(tags)

@@ -13,19 +13,41 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 from pathlib import Path
 from datetime import timedelta
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def load_local_environment(path):
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding='utf-8').splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+load_local_environment(BASE_DIR.parent / '.env.local')
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'dev-only-change-me')
+ENVIRONMENT = os.environ.get('DJANGO_ENV', 'development').lower()
+IS_PRODUCTION = ENVIRONMENT == 'production'
+DEV_SECRET_KEY = 'dev-only-change-me-please-use-an-environment-key'
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', DEV_SECRET_KEY)
+if IS_PRODUCTION and (SECRET_KEY == DEV_SECRET_KEY or len(SECRET_KEY) < 32):
+    raise ImproperlyConfigured('生产环境必须配置至少 32 位的 DJANGO_SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DJANGO_DEBUG', 'true').lower() == 'true'
+DEBUG = os.environ.get('DJANGO_DEBUG', 'false' if IS_PRODUCTION else 'true').lower() == 'true'
+if IS_PRODUCTION and DEBUG:
+    raise ImproperlyConfigured('生产环境不能开启 DJANGO_DEBUG')
 
 ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', '127.0.0.1,localhost').split(',')
 
@@ -79,12 +101,21 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
+DB_ENGINE = os.environ.get('DJANGO_DB_ENGINE', 'django.db.backends.sqlite3')
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': DB_ENGINE,
+        'NAME': os.environ.get('DJANGO_DB_NAME', str(BASE_DIR / 'db.sqlite3')),
     }
 }
+if DB_ENGINE != 'django.db.backends.sqlite3':
+    DATABASES['default'].update({
+        'USER': os.environ.get('DJANGO_DB_USER', ''),
+        'PASSWORD': os.environ.get('DJANGO_DB_PASSWORD', ''),
+        'HOST': os.environ.get('DJANGO_DB_HOST', '127.0.0.1'),
+        'PORT': os.environ.get('DJANGO_DB_PORT', '5432'),
+        'CONN_MAX_AGE': int(os.environ.get('DJANGO_DB_CONN_MAX_AGE', '60' if IS_PRODUCTION else '0')),
+    })
 
 
 # Password validation
@@ -128,6 +159,11 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 WORK_MAX_UPLOAD_SIZE = int(os.environ.get('WORK_MAX_UPLOAD_SIZE', 500 * 1024 * 1024))
 WORK_UPLOAD_CHUNK_DIR = MEDIA_ROOT / 'upload_chunks'
+WORK_MAX_UPLOAD_CHUNK_SIZE = int(os.environ.get('WORK_MAX_UPLOAD_CHUNK_SIZE', 8 * 1024 * 1024))
+WORK_MAX_UPLOAD_CHUNKS = int(os.environ.get('WORK_MAX_UPLOAD_CHUNKS', 1000))
+WORK_MAX_ACTIVE_UPLOADS = int(os.environ.get('WORK_MAX_ACTIVE_UPLOADS', 5))
+WORK_MAX_PENDING_UPLOAD_BYTES = int(os.environ.get('WORK_MAX_PENDING_UPLOAD_BYTES', 1024 * 1024 * 1024))
+WORK_UPLOAD_SESSION_TTL_HOURS = int(os.environ.get('WORK_UPLOAD_SESSION_TTL_HOURS', 24))
 DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('DATA_UPLOAD_MAX_MEMORY_SIZE', 20 * 1024 * 1024))
 FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('FILE_UPLOAD_MAX_MEMORY_SIZE', 10 * 1024 * 1024))
 
@@ -147,6 +183,18 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticatedOrReadOnly',
     ),
+    'DEFAULT_THROTTLE_CLASSES': (
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.ScopedRateThrottle',
+    ),
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': os.environ.get('DRF_ANON_THROTTLE_RATE', '60/min'),
+        'user': os.environ.get('DRF_USER_THROTTLE_RATE', '300/min'),
+        'login': os.environ.get('DRF_LOGIN_THROTTLE_RATE', '10/min'),
+        'upload': os.environ.get('DRF_UPLOAD_THROTTLE_RATE', '180/min'),
+        'search': os.environ.get('DRF_SEARCH_THROTTLE_RATE', '60/min'),
+    },
 }
 
 SIMPLE_JWT = {
@@ -156,3 +204,13 @@ SIMPLE_JWT = {
     'BLACKLIST_AFTER_ROTATION': True,
     'UPDATE_LAST_LOGIN': True,
 }
+
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SECURE_SSL_REDIRECT = IS_PRODUCTION
+SESSION_COOKIE_SECURE = IS_PRODUCTION
+CSRF_COOKIE_SECURE = IS_PRODUCTION
+SECURE_HSTS_SECONDS = int(os.environ.get('DJANGO_SECURE_HSTS_SECONDS', '31536000' if IS_PRODUCTION else '0'))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = IS_PRODUCTION
+SECURE_HSTS_PRELOAD = IS_PRODUCTION
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'

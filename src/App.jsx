@@ -31,15 +31,6 @@ const viewTitles = {
   review: "内容审核台",
 };
 
-const trainingDates = [
-  { value: "2026-07-19", label: "07/19", weekday: "周日" },
-  { value: "2026-07-20", label: "07/20", weekday: "周一" },
-  { value: "2026-07-21", label: "07/21", weekday: "周二" },
-  { value: "2026-07-22", label: "07/22", weekday: "周三" },
-  { value: "2026-07-23", label: "07/23", weekday: "周四" },
-  { value: "2026-07-24", label: "07/24", weekday: "周五" },
-];
-
 const genderOptions = [
   { value: "female", label: "女" },
   { value: "male", label: "男" },
@@ -107,6 +98,7 @@ const welcomeSteps = [
 
 function App() {
   const [profile, setProfile] = useState(null);
+  const [camp, setCamp] = useState(null);
   const [activeTab, setActiveTab] = useState("feed");
   const [booting, setBooting] = useState(true);
   const [loginError, setLoginError] = useState("");
@@ -123,10 +115,11 @@ function App() {
       }
 
       try {
-        const me = await api.me();
+        const [me, currentCamp] = await Promise.all([api.me(), api.currentCamp().catch(() => null)]);
         setProfile(me);
+        setCamp(currentCamp);
         setActiveTab(me.role === "admin" ? "review" : "feed");
-        setShowWelcome(shouldShowWelcome(me));
+        setShowWelcome(shouldShowWelcome(me, currentCamp));
       } catch {
         clearTokens();
       } finally {
@@ -149,29 +142,31 @@ function App() {
   async function handleLogin(username, password) {
     setLoginError("");
     await login(username, password);
-    const me = await api.me();
+    const [me, currentCamp] = await Promise.all([api.me(), api.currentCamp().catch(() => null)]);
     setProfile(me);
+    setCamp(currentCamp);
     setActiveTab(me.role === "admin" ? "review" : "feed");
-    setShowWelcome(shouldShowWelcome(me));
+    setShowWelcome(shouldShowWelcome(me, currentCamp));
   }
 
   function logout() {
     clearTokens();
     setProfile(null);
+    setCamp(null);
     setActiveTab("feed");
     setShowWelcome(false);
   }
 
   function finishWelcome() {
     if (profile?.username) {
-      localStorage.setItem(`${WELCOME_SEEN_KEY}.${profile.username}`, "true");
+      localStorage.setItem(welcomeStorageKey(profile, camp), "true");
     }
     setShowWelcome(false);
   }
 
   function replayWelcome() {
     if (profile?.username) {
-      localStorage.removeItem(`${WELCOME_SEEN_KEY}.${profile.username}`);
+      localStorage.removeItem(welcomeStorageKey(profile, camp));
     }
     setShowWelcome(true);
   }
@@ -213,9 +208,9 @@ function App() {
         {!(role === "student" && (activeTab === "feed" || activeTab === "profile")) && (
           <TopBar activeTab={activeTab} role={role} onLogout={logout} />
         )}
-        {activeTab === "feed" && <FeedView role={role} />}
-        {activeTab === "courses" && <CourseView />}
-        {activeTab === "publish" && <PublishView />}
+        {activeTab === "feed" && <FeedView camp={camp} role={role} />}
+        {activeTab === "courses" && <CourseView camp={camp} />}
+        {activeTab === "publish" && <PublishView camp={camp} />}
         {activeTab === "profile" && (
           <ProfileView profile={profile} onLogout={logout} onProfileSaved={setProfile} onReplayWelcome={replayWelcome} />
         )}
@@ -228,8 +223,12 @@ function App() {
   );
 }
 
-function shouldShowWelcome(profile) {
-  return profile?.role === "student" && localStorage.getItem(`${WELCOME_SEEN_KEY}.${profile.username}`) !== "true";
+function welcomeStorageKey(profile, camp) {
+  return `${WELCOME_SEEN_KEY}.${camp?.slug || "default"}.${profile?.username || "unknown"}`;
+}
+
+function shouldShowWelcome(profile, camp) {
+  return profile?.role === "student" && localStorage.getItem(welcomeStorageKey(profile, camp)) !== "true";
 }
 
 function LoginScreen({ error, onError, onLogin }) {
@@ -448,8 +447,9 @@ function TopBar({ activeTab, role, onLogout }) {
   );
 }
 
-function FeedView({ role }) {
-  const [selectedDate, setSelectedDate] = useState("2026-07-19");
+function FeedView({ camp, role }) {
+  const trainingDates = useMemo(() => buildTrainingDates(camp), [camp]);
+  const [selectedDate, setSelectedDate] = useState(camp?.training_dates?.[0] || "");
   const [selectedCourse, setSelectedCourse] = useState(null);
   const [filter, setFilter] = useState("all");
   const [keyword, setKeyword] = useState("");
@@ -466,6 +466,13 @@ function FeedView({ role }) {
   const [actionMessage, setActionMessage] = useState("");
   const [actionError, setActionError] = useState("");
   const [scheduleEpoch, setScheduleEpoch] = useState(0);
+
+  useEffect(() => {
+    const firstDate = trainingDates[0]?.value || "";
+    if (!trainingDates.some((day) => day.value === selectedDate)) {
+      setSelectedDate(firstDate);
+    }
+  }, [selectedDate, trainingDates]);
 
   async function loadWorks() {
     setLoading(true);
@@ -520,7 +527,9 @@ function FeedView({ role }) {
   }, [filter]);
 
   useEffect(() => {
-    loadCourses(selectedDate);
+    if (selectedDate) {
+      loadCourses(selectedDate);
+    }
   }, [selectedDate]);
 
   useEffect(() => {
@@ -652,7 +661,7 @@ function FeedView({ role }) {
           <h2>优秀作品展示中</h2>
           <p>分享成长，收获认可。浏览课程进度、TOP 排行榜和同学们的创意作品。</p>
           <div className="heroPills">
-            <strong>课程 7/19 - 7/24</strong>
+            <strong>课程 {formatCampRange(camp)}</strong>
             <strong>点赞榜 TOP5</strong>
             <strong>投票榜 TOP5</strong>
           </div>
@@ -664,7 +673,7 @@ function FeedView({ role }) {
         <div className="scheduleHead">
           <div>
             <span>课程表</span>
-            <h2>7月19日 - 24日</h2>
+            <h2>{formatCampRange(camp)}</h2>
           </div>
           <p>切换日期查看当天课程安排</p>
         </div>
@@ -878,6 +887,7 @@ function WorkCard({ work, index, onLike, onOpen, onVote }) {
       <div className="workBody">
         <div className="tagLine">
           <span>{workTypeLabel(work)}</span>
+          {(work.tags || []).slice(0, 2).map((tag) => <span key={tag}>#{tag}</span>)}
           <span>{work.vote_count ?? 0} 票</span>
         </div>
         <h3>{work.title}</h3>
@@ -958,6 +968,7 @@ function WorkDetailPage({ work, onBack, onLike, onVote, actionMessage, actionErr
           <div className="tagLine">
             <span>{workTypeLabel(work)}</span>
             <span>{mediaTypeLabel(work)}</span>
+            {(work.tags || []).map((tag) => <span key={tag}>#{tag}</span>)}
             <span>{work.vote_count ?? 0} 票</span>
           </div>
           <h2>{work.title}</h2>
@@ -1025,7 +1036,7 @@ function CourseDetailModal({ course, onClose }) {
   );
 }
 
-function CourseView() {
+function CourseView({ camp }) {
   const [courses, setCourses] = useState([]);
   const [selectedCourse, setSelectedCourse] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1049,7 +1060,7 @@ function CourseView() {
     <section className="sectionPanel">
       <div className="panelTitle">
         <span>课程表</span>
-        <h2>这周的培训节奏</h2>
+        <h2>{camp?.name || "当前培训期"}</h2>
       </div>
       {error && <p className="errorText">{error}</p>}
       {loading ? (
@@ -1071,8 +1082,8 @@ function CourseView() {
   );
 }
 
-function PublishView() {
-  const initialForm = { title: "", work_type: "ai", link: "", asset: null, images: [], description: "" };
+function PublishView({ camp }) {
+  const initialForm = { title: "", work_type: "ai", tags: "", link: "", asset: null, images: [], description: "" };
   const [form, setForm] = useState(initialForm);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [uploadProgress, setUploadProgress] = useState(null);
@@ -1082,6 +1093,10 @@ function PublishView() {
 
   async function submit(event) {
     event.preventDefault();
+    if (!camp?.submission_open) {
+      setError("当前不在作品投稿时间内。");
+      return;
+    }
     setSubmitting(true);
     setMessage("");
     setError("");
@@ -1128,6 +1143,7 @@ function PublishView() {
         <img src={mascotUiUpload} alt="" />
       </div>
       <form className="publishForm" onSubmit={submit}>
+        {!camp?.submission_open && <p className="errorText">当前培训期投稿通道尚未开放或已经结束。</p>}
         <label>
           作品标题
           <input
@@ -1182,7 +1198,7 @@ function PublishView() {
         {uploadProgress && (
           <p className="uploadProgress">正在上传：{uploadProgress.current}/{uploadProgress.total} 片，{uploadProgress.percent}%</p>
         )}
-        <button disabled={submitting} type="submit">
+        <button disabled={submitting || !camp?.submission_open} type="submit">
           {submitting ? "提交中..." : "提交审核"}
         </button>
       </form>
@@ -1359,6 +1375,15 @@ function ReviewView() {
             <option value="ai">AI 作品</option>
             <option value="training">培训作品</option>
           </select>
+        </label>
+        <label>
+          作品标签
+          <input
+            onChange={(event) => updateField("tags", event.target.value)}
+            placeholder="例如：AI 海报，流程 Demo（最多 5 个）"
+            value={form.tags}
+          />
+          <small>用逗号、顿号或换行分隔，每个标签最多 20 个字符。</small>
         </label>
         <label>
           文件类型
@@ -1557,6 +1582,7 @@ function ReviewPreviewModal({ work, onClose }) {
             <div className="tagLine">
               <span>{workTypeLabel(work)}</span>
               <span>{mediaTypeLabel(work)}</span>
+              {(work.tags || []).map((tag) => <span key={tag}>#{tag}</span>)}
               <span>{formatFileSize(work.file_size)}</span>
             </div>
             <h2>{work.title}</h2>
@@ -1644,6 +1670,7 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
       title: work.title,
       work_type: work.work_type,
       link: work.link || "",
+      tags: (work.tags || []).join("，"),
       asset: null,
       images: [],
       description: work.description,
@@ -1884,6 +1911,15 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
                 </select>
               </label>
               <label>
+                作品标签
+                <input
+                  placeholder="例如：AI 海报，流程 Demo"
+                  value={workDraft.tags}
+                  onChange={(event) => updateWorkDraft("tags", event.target.value)}
+                />
+                <small>最多 5 个标签，用逗号、顿号或换行分隔。</small>
+              </label>
+              <label>
                 作品链接
                 <input type="url" value={workDraft.link} onChange={(event) => updateWorkDraft("link", event.target.value)} />
               </label>
@@ -1930,14 +1966,26 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
 
 function StudentRail() {
   const [featured, setFeatured] = useState(null);
+  const [popularTags, setPopularTags] = useState([]);
 
   useEffect(() => {
-    async function loadFeatured() {
-      const list = await api.leaderboard();
+    async function loadRailData() {
+      const [list, tags] = await Promise.all([api.leaderboard(), api.popularTags()]);
       setFeatured(list[0] ?? null);
+      setPopularTags(tags);
     }
 
-    loadFeatured().catch(() => setFeatured(null));
+    const refresh = () => loadRailData().catch(() => {
+      setFeatured(null);
+      setPopularTags([]);
+    });
+    refresh();
+    window.addEventListener("reviewQueueChanged", refresh);
+    const timer = window.setInterval(refresh, 60000);
+    return () => {
+      window.removeEventListener("reviewQueueChanged", refresh);
+      window.clearInterval(timer);
+    };
   }, []);
 
   return (
@@ -1953,10 +2001,15 @@ function StudentRail() {
       <section className="topicCard">
         <h2>热门标签</h2>
         <div>
-          <span>AI 海报</span>
-          <span>流程 Demo</span>
-          <span>知识地图</span>
-          <span>结业路演</span>
+          {popularTags.length > 0 ? (
+            popularTags.map((tag) => (
+              <span key={tag.id} title={`${tag.work_count} 个已发布作品`}>
+                #{tag.name} · {tag.work_count}
+              </span>
+            ))
+          ) : (
+            <span>暂无作品标签</span>
+          )}
         </div>
       </section>
     </aside>
@@ -2008,6 +2061,21 @@ function EmptyState({ title, text }) {
       <p>{text}</p>
     </div>
   );
+}
+
+function buildTrainingDates(camp) {
+  return (camp?.training_dates || []).map((value) => ({
+    value,
+    label: value.slice(5).replace("-", "/"),
+    weekday: new Intl.DateTimeFormat("zh-CN", { weekday: "short" }).format(new Date(`${value}T12:00:00`)),
+  }));
+}
+
+function formatCampRange(camp) {
+  if (!camp?.start_date || !camp?.end_date) {
+    return "待公布";
+  }
+  return `${formatDate(camp.start_date)} - ${formatDate(camp.end_date)}`;
 }
 
 function formatDate(date) {
@@ -2214,6 +2282,7 @@ function buildWorkFormData(work, uploadId = null) {
   formData.append("work_type", work.work_type);
   formData.append("link", work.link || "");
   formData.append("description", work.description);
+  formData.append("tags", JSON.stringify(parseTagInput(work.tags)));
   if (uploadId) {
     formData.append("upload_id", uploadId);
   }
@@ -2221,6 +2290,19 @@ function buildWorkFormData(work, uploadId = null) {
     formData.append("images", image);
   });
   return formData;
+}
+
+function parseTagInput(value) {
+  const values = Array.isArray(value) ? value : String(value || "").split(/[,，、\n]+/);
+  const seen = new Set();
+  return values
+    .map((tag) => String(tag).trim().replace(/^#+/, "").trim())
+    .filter((tag) => {
+      const key = tag.toLocaleLowerCase();
+      if (!tag || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
 
 function buildProfileFormData(profile) {

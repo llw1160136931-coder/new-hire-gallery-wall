@@ -1,34 +1,64 @@
+import hashlib
+import re
 import shutil
+from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
 from django.core.files import File
 from django.db import IntegrityError, transaction
-from django.db.models import Count, F, Q
+from django.db.models import Count, F, Q, Sum
 from django.utils import timezone
 from django.utils.text import get_valid_filename
-from rest_framework import parsers, permissions, status, viewsets
+from rest_framework import parsers, permissions, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from .models import ChunkedUpload, Course, Like, Profile, Work, Vote, WorkReviewLog
+from .models import ChunkedUpload, Course, Like, Profile, Tag, TrainingCamp, Work, Vote, WorkReviewLog
 from .permissions import IsAdminRole
 from .serializers import (
     BulkReviewSerializer,
     CourseSerializer,
     LeaderboardSerializer,
+    PopularTagSerializer,
     ProfileSerializer,
     PublicProfileSerializer,
     ReviewSerializer,
+    TrainingCampSerializer,
     WorkSerializer,
     WorkReviewLogSerializer,
     media_type_from_content_type,
+    validate_file_signature,
 )
 
 
-MAX_WORK_UPLOAD_SIZE = 500 * 1024 * 1024
-MAX_VOTES_PER_USER = 5
+def active_camp():
+    return TrainingCamp.get_active()
+
+
+def window_is_open(starts_at, ends_at):
+    now = timezone.now()
+    return (not starts_at or starts_at <= now) and (not ends_at or now <= ends_at)
+
+
+class CurrentTrainingCampView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        camp = active_camp()
+        if not camp:
+            return Response({'detail': '当前没有激活的培训期'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(TrainingCampSerializer(camp, context={'request': request}).data)
+
+
+class ThrottledTokenObtainPairView(TokenObtainPairView):
+    throttle_scope = 'login'
+
+
+class ThrottledTokenRefreshView(TokenRefreshView):
+    throttle_scope = 'login'
 
 
 class RegisterView(APIView):
@@ -66,6 +96,11 @@ class CourseViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         queryset = Course.objects.all()
+        camp = active_camp()
+        if camp:
+            queryset = queryset.filter(camp=camp)
+        else:
+            queryset = queryset.none()
         date = self.request.query_params.get('date')
         if date:
             queryset = queryset.filter(date=date)
@@ -85,6 +120,11 @@ class WorkViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = WorkSerializer.setup_eager_loading(Work.objects.all())
+        camp = active_camp()
+        if camp:
+            queryset = queryset.filter(camp=camp)
+        else:
+            queryset = queryset.none()
         if self.action in ['list', 'retrieve', 'like', 'vote']:
             queryset = queryset.filter(status=Work.Status.APPROVED)
         if self.action == 'list':
@@ -114,12 +154,19 @@ class WorkViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        serializer.save(author=self.request.user, status=Work.Status.PENDING)
+        camp = active_camp()
+        if not camp:
+            raise serializers.ValidationError({'camp': '当前没有可投稿的培训期'})
+        if not window_is_open(camp.submission_starts_at, camp.submission_ends_at):
+            raise serializers.ValidationError({'camp': '当前培训期不在投稿时间内'})
+        serializer.save(author=self.request.user, camp=camp, status=Work.Status.PENDING)
 
     def perform_update(self, serializer):
         work = self.get_object()
         if not self._can_edit_work(work):
             self.permission_denied(self.request, message='只能编辑自己的作品')
+        if not window_is_open(work.camp.submission_starts_at, work.camp.submission_ends_at):
+            raise serializers.ValidationError({'camp': '当前培训期不在投稿时间内'})
 
         serializer.save(
             status=Work.Status.PENDING,
@@ -176,7 +223,7 @@ class WorkViewSet(viewsets.ModelViewSet):
             return Response({'reject_reason': '批量打回时必须填写原因'}, status=status.HTTP_400_BAD_REQUEST)
 
         ids = serializer.validated_data['ids']
-        works = list(Work.objects.filter(id__in=ids, status=Work.Status.PENDING))
+        works = list(Work.objects.filter(id__in=ids, status=Work.Status.PENDING, camp=active_camp()))
         found_ids = {work.id for work in works}
         missing_ids = [work_id for work_id in ids if work_id not in found_ids]
 
@@ -243,6 +290,10 @@ class WorkViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def vote(self, request, pk=None):
         work = self.get_object()
+        camp = work.camp
+        if not window_is_open(camp.voting_starts_at, camp.voting_ends_at):
+            return Response({'detail': '当前不在投票时间内'}, status=status.HTTP_400_BAD_REQUEST)
+        vote_limit = camp.vote_limit
         with transaction.atomic():
             request.user.__class__.objects.select_for_update().get(pk=request.user.pk)
 
@@ -255,11 +306,11 @@ class WorkViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            used_votes = Vote.objects.filter(user=request.user).count()
-            if used_votes >= MAX_VOTES_PER_USER:
+            used_votes = Vote.objects.filter(user=request.user, work__camp=camp).count()
+            if used_votes >= vote_limit:
                 return Response(
                     {
-                        'detail': '每位学员最多只能投 5 票',
+                        'detail': f'本期每位学员最多只能投 {vote_limit} 票',
                         **self._interaction_state(work, request.user),
                     },
                     status=status.HTTP_400_BAD_REQUEST,
@@ -277,7 +328,7 @@ class WorkViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        remaining_votes = max(MAX_VOTES_PER_USER - Vote.objects.filter(user=request.user).count(), 0)
+        remaining_votes = max(vote_limit - Vote.objects.filter(user=request.user, work__camp=camp).count(), 0)
         return Response(
             {
                 'detail': f'投票成功，还剩 {remaining_votes} 票',
@@ -290,14 +341,15 @@ class WorkViewSet(viewsets.ModelViewSet):
         refreshed_work = self.get_serializer(
             WorkSerializer.setup_eager_loading(Work.objects.filter(pk=work.pk)).get()
         ).data
-        used_votes = Vote.objects.filter(user=user).count()
+        used_votes = Vote.objects.filter(user=user, work__camp=work.camp).count()
+        vote_limit = work.camp.vote_limit
         return {
             'work': refreshed_work,
             'liked': Like.objects.filter(user=user, work=work).exists(),
             'voted': Vote.objects.filter(user=user, work=work).exists(),
             'used_votes': used_votes,
-            'remaining_votes': max(MAX_VOTES_PER_USER - used_votes, 0),
-            'max_votes': MAX_VOTES_PER_USER,
+            'remaining_votes': max(vote_limit - used_votes, 0),
+            'max_votes': vote_limit,
         }
 
 
@@ -305,8 +357,11 @@ class LeaderboardView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
+        camp = active_camp()
+        if not camp:
+            return Response([])
         queryset = (
-            Work.objects.filter(status=Work.Status.APPROVED)
+            Work.objects.filter(status=Work.Status.APPROVED, camp=camp)
             .select_related('author__profile')
             .annotate(like_count=Count('likes', distinct=True), vote_count=Count('votes', distinct=True))
             .annotate(score=F('like_count') + F('vote_count'))
@@ -315,19 +370,37 @@ class LeaderboardView(APIView):
         return Response(LeaderboardSerializer(queryset, many=True).data)
 
 
+class PopularTagView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        camp = active_camp()
+        if not camp:
+            return Response([])
+        queryset = (
+            Tag.objects.filter(works__camp=camp, works__status=Work.Status.APPROVED)
+            .annotate(work_count=Count('works', distinct=True))
+            .order_by('-work_count', 'name')[:8]
+        )
+        return Response(PopularTagSerializer(queryset, many=True).data)
+
+
 class SearchView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = 'search'
 
     def get(self, request):
         keyword = request.query_params.get('q', '').strip()
         if not keyword:
             return Response({'works': [], 'profiles': []})
 
+        camp = active_camp()
         works = (
-            WorkSerializer.setup_eager_loading(Work.objects.filter(status=Work.Status.APPROVED))
+            WorkSerializer.setup_eager_loading(Work.objects.filter(status=Work.Status.APPROVED, camp=camp))
             .filter(
                 Q(title__icontains=keyword)
                 | Q(description__icontains=keyword)
+                | Q(tags__name__icontains=keyword)
                 | Q(author__profile__name__icontains=keyword)
             )
             .distinct()[:12]
@@ -353,14 +426,21 @@ class SearchView(APIView):
 
 class UploadInitView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = 'upload'
 
     def post(self, request):
         file_name = str(request.data.get('file_name', '')).strip()
         content_type = str(request.data.get('content_type', '')).strip()
+        expected_sha256 = str(request.data.get('sha256', '')).strip().lower()
         total_size = self.to_int(request.data.get('total_size'))
         total_chunks = self.to_int(request.data.get('total_chunks'))
         media_type = media_type_from_content_type(content_type)
+        camp = active_camp()
 
+        if not camp:
+            return Response({'camp': '当前没有可投稿的培训期'}, status=status.HTTP_400_BAD_REQUEST)
+        if not window_is_open(camp.submission_starts_at, camp.submission_ends_at):
+            return Response({'camp': '当前培训期不在投稿时间内'}, status=status.HTTP_400_BAD_REQUEST)
         if not file_name:
             return Response({'file_name': '文件名不能为空'}, status=status.HTTP_400_BAD_REQUEST)
         if not media_type:
@@ -369,14 +449,32 @@ class UploadInitView(APIView):
             return Response({'total_size': '文件大小必须大于 0 且不能超过 500MB'}, status=status.HTTP_400_BAD_REQUEST)
         if not total_chunks or total_chunks <= 0:
             return Response({'total_chunks': '分片数量不正确'}, status=status.HTTP_400_BAD_REQUEST)
+        if total_chunks > settings.WORK_MAX_UPLOAD_CHUNKS:
+            return Response({'total_chunks': '分片数量超过限制'}, status=status.HTTP_400_BAD_REQUEST)
+        if expected_sha256 and not re.fullmatch(r'[0-9a-f]{64}', expected_sha256):
+            return Response({'sha256': 'SHA-256 摘要格式不正确'}, status=status.HTTP_400_BAD_REQUEST)
+
+        pending_uploads = ChunkedUpload.objects.filter(
+            owner=request.user,
+            consumed_at__isnull=True,
+            expires_at__gt=timezone.now(),
+        )
+        if pending_uploads.count() >= settings.WORK_MAX_ACTIVE_UPLOADS:
+            return Response({'detail': '未完成的上传任务过多，请完成或等待过期后再试'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        pending_bytes = pending_uploads.aggregate(total=Sum('total_size'))['total'] or 0
+        if pending_bytes + total_size > settings.WORK_MAX_PENDING_UPLOAD_BYTES:
+            return Response({'detail': '待处理上传文件总量超过个人配额'}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         upload = ChunkedUpload.objects.create(
+            camp=camp,
             owner=request.user,
             file_name=get_valid_filename(file_name),
             content_type=content_type,
             media_type=media_type,
             total_size=total_size,
             total_chunks=total_chunks,
+            expected_sha256=expected_sha256,
+            expires_at=timezone.now() + timedelta(hours=settings.WORK_UPLOAD_SESSION_TTL_HOURS),
         )
 
         return Response({
@@ -386,6 +484,7 @@ class UploadInitView(APIView):
             'total_size': upload.total_size,
             'total_chunks': upload.total_chunks,
             'max_size': settings.WORK_MAX_UPLOAD_SIZE,
+            'expires_at': upload.expires_at,
         }, status=status.HTTP_201_CREATED)
 
     @staticmethod
@@ -399,6 +498,7 @@ class UploadInitView(APIView):
 class UploadChunkView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [parsers.MultiPartParser, parsers.FormParser]
+    throttle_scope = 'upload'
 
     def post(self, request, upload_id):
         upload = self.get_upload(request, upload_id)
@@ -411,18 +511,27 @@ class UploadChunkView(APIView):
             return Response({'index': '分片序号不正确'}, status=status.HTTP_400_BAD_REQUEST)
         if not chunk:
             return Response({'chunk': '缺少分片文件'}, status=status.HTTP_400_BAD_REQUEST)
+        if chunk.size <= 0 or chunk.size > settings.WORK_MAX_UPLOAD_CHUNK_SIZE:
+            return Response({'chunk': '分片为空或超过单片大小限制'}, status=status.HTTP_400_BAD_REQUEST)
 
         chunk_dir = self.chunk_dir(upload.upload_id)
         chunk_dir.mkdir(parents=True, exist_ok=True)
         chunk_path = chunk_dir / f'{index}.part'
+        existing_size = chunk_path.stat().st_size if chunk_path.exists() else 0
+        received_size = sum(path.stat().st_size for path in chunk_dir.glob('*.part')) - existing_size
+        if received_size + chunk.size > upload.total_size:
+            return Response({'chunk': '分片总大小超过声明的文件大小'}, status=status.HTTP_400_BAD_REQUEST)
         with chunk_path.open('wb') as target:
             for piece in chunk.chunks():
                 target.write(piece)
 
-        uploaded_chunks = set(upload.uploaded_chunks)
-        uploaded_chunks.add(index)
-        upload.uploaded_chunks = sorted(uploaded_chunks)
-        upload.save(update_fields=['uploaded_chunks', 'updated_at'])
+        with transaction.atomic():
+            locked_upload = ChunkedUpload.objects.select_for_update().get(pk=upload.pk)
+            uploaded_chunks = set(locked_upload.uploaded_chunks)
+            uploaded_chunks.add(index)
+            locked_upload.uploaded_chunks = sorted(uploaded_chunks)
+            locked_upload.save(update_fields=['uploaded_chunks', 'updated_at'])
+            upload.uploaded_chunks = locked_upload.uploaded_chunks
 
         return Response({
             'upload_id': str(upload.upload_id),
@@ -435,8 +544,10 @@ class UploadChunkView(APIView):
         upload = ChunkedUpload.objects.filter(upload_id=upload_id, owner=request.user).first()
         if not upload:
             return Response({'upload_id': '上传会话不存在'}, status=status.HTTP_404_NOT_FOUND)
-        if upload.status == ChunkedUpload.Status.COMPLETED:
+        if upload.status != ChunkedUpload.Status.UPLOADING:
             return Response({'upload_id': '上传已经完成'}, status=status.HTTP_400_BAD_REQUEST)
+        if upload.expires_at <= timezone.now():
+            return Response({'upload_id': '上传会话已过期，请重新上传'}, status=status.HTTP_410_GONE)
         return upload
 
     @staticmethod
@@ -446,13 +557,16 @@ class UploadChunkView(APIView):
 
 class UploadCompleteView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_scope = 'upload'
 
     def post(self, request, upload_id):
         upload = ChunkedUpload.objects.filter(upload_id=upload_id, owner=request.user).first()
         if not upload:
             return Response({'upload_id': '上传会话不存在'}, status=status.HTTP_404_NOT_FOUND)
-        if upload.status == ChunkedUpload.Status.COMPLETED:
+        if upload.status != ChunkedUpload.Status.UPLOADING:
             return self.response_for_upload(upload)
+        if upload.expires_at <= timezone.now():
+            return Response({'upload_id': '上传会话已过期，请重新上传'}, status=status.HTTP_410_GONE)
 
         expected = set(range(upload.total_chunks))
         received = set(upload.uploaded_chunks)
@@ -464,22 +578,37 @@ class UploadCompleteView(APIView):
 
         chunk_dir = UploadChunkView.chunk_dir(upload.upload_id)
         combined_path = chunk_dir / 'combined.upload'
+        digest = hashlib.sha256()
         with combined_path.open('wb') as combined:
             for index in range(upload.total_chunks):
                 chunk_path = chunk_dir / f'{index}.part'
                 if not chunk_path.exists():
                     return Response({'detail': f'缺少第 {index} 个分片'}, status=status.HTTP_400_BAD_REQUEST)
                 with chunk_path.open('rb') as source:
-                    shutil.copyfileobj(source, combined)
+                    while piece := source.read(1024 * 1024):
+                        digest.update(piece)
+                        combined.write(piece)
 
         if combined_path.stat().st_size != upload.total_size:
+            combined_path.unlink(missing_ok=True)
             return Response({'detail': '合并后的文件大小与声明大小不一致'}, status=status.HTTP_400_BAD_REQUEST)
+
+        actual_sha256 = digest.hexdigest()
+        if upload.expected_sha256 and upload.expected_sha256 != actual_sha256:
+            combined_path.unlink(missing_ok=True)
+            return Response({'detail': '文件摘要校验失败，请重新上传'}, status=status.HTTP_400_BAD_REQUEST)
+        with combined_path.open('rb') as combined_file:
+            valid_signature = validate_file_signature(combined_file, upload.content_type)
+        if not valid_signature:
+            combined_path.unlink(missing_ok=True)
+            return Response({'detail': '文件内容与声明类型不匹配或文件已损坏'}, status=status.HTTP_400_BAD_REQUEST)
 
         final_name = f'{upload.upload_id}_{upload.file_name}'
         with combined_path.open('rb') as file_obj:
             upload.file.save(final_name, File(file_obj), save=False)
         upload.status = ChunkedUpload.Status.COMPLETED
-        upload.save(update_fields=['file', 'status', 'updated_at'])
+        upload.sha256 = actual_sha256
+        upload.save(update_fields=['file', 'sha256', 'status', 'updated_at'])
         shutil.rmtree(chunk_dir, ignore_errors=True)
         return self.response_for_upload(upload)
 
@@ -492,4 +621,6 @@ class UploadCompleteView(APIView):
             'content_type': upload.content_type,
             'media_type': upload.media_type,
             'total_size': upload.total_size,
+            'sha256': upload.sha256,
+            'expires_at': upload.expires_at,
         })

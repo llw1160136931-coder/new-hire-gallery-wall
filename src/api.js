@@ -133,6 +133,7 @@ export async function login(username, password) {
 
 export const api = {
   me: () => apiRequest("/me/"),
+  currentCamp: () => apiRequest("/camps/current/", { auth: false }),
   updateMe: (profile) => apiRequest("/me/", { method: "PATCH", body: profile }),
   courses: (date) => apiRequest(date ? `/courses/?date=${date}` : "/courses/"),
   works: (type) => apiRequest(type && type !== "all" ? `/works/?type=${type}` : "/works/"),
@@ -149,6 +150,7 @@ export const api = {
   reviewLogs: () => apiRequest("/works/review-logs/"),
   bulkReview: (payload) => apiRequest("/works/bulk-review/", { method: "POST", body: payload }),
   leaderboard: () => apiRequest("/leaderboard/"),
+  popularTags: () => apiRequest("/tags/popular/", { auth: false }),
   search: (keyword) => apiRequest(`/search/?q=${encodeURIComponent(keyword)}`),
   initUpload: (payload) => apiRequest("/uploads/init/", { method: "POST", body: payload }),
   uploadChunk: (uploadId, formData) => apiRequest(`/uploads/${uploadId}/chunk/`, { method: "POST", body: formData }),

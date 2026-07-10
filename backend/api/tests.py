@@ -1,12 +1,15 @@
+import hashlib
 import shutil
 import tempfile
+from datetime import timedelta
 
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .models import ChunkedUpload, Course, Like, Profile, Vote, Work, WorkImage, WorkReviewLog
+from .models import ChunkedUpload, Course, Like, Profile, Tag, TrainingCamp, Vote, Work, WorkImage, WorkReviewLog
 
 
 TEST_MEDIA_ROOT = tempfile.mkdtemp()
@@ -21,6 +24,12 @@ class WorkApiTests(TestCase):
 
     def setUp(self):
         self.client = APIClient()
+        self.camp = TrainingCamp.get_active()
+        self.camp.name = 'Test camp'
+        self.camp.start_date = '2026-07-19'
+        self.camp.end_date = '2026-07-24'
+        self.camp.vote_limit = 5
+        self.camp.save()
         self.student = User.objects.create_user(username='student', password='Student12345')
         self.other = User.objects.create_user(username='other', password='Other12345')
         self.admin = User.objects.create_user(username='admin', password='Admin12345', is_staff=True)
@@ -166,6 +175,7 @@ class WorkApiTests(TestCase):
         upload = ChunkedUpload.objects.get(upload_id=upload_id)
         self.assertEqual(upload.status, ChunkedUpload.Status.COMPLETED)
         self.assertTrue(upload.file.name.startswith('works/files/'))
+        self.assertEqual(upload.sha256, hashlib.sha256(content).hexdigest())
 
         work_response = self.client.post('/api/works/', {
             'title': 'PDF 培训手册',
@@ -180,6 +190,17 @@ class WorkApiTests(TestCase):
         self.assertEqual(work.content_type, 'application/pdf')
         self.assertEqual(work.file_size, len(content))
         self.assertTrue(work.attachment.name.startswith('works/files/'))
+        upload.refresh_from_db()
+        self.assertEqual(upload.status, ChunkedUpload.Status.CONSUMED)
+        self.assertIsNotNone(upload.consumed_at)
+
+        reused_response = self.client.post('/api/works/', {
+            'title': '重复使用上传文件',
+            'work_type': Work.WorkType.TRAINING,
+            'description': '同一个上传结果不能重复使用。',
+            'upload_id': upload_id,
+        }, format='multipart')
+        self.assertEqual(reused_response.status_code, 400)
 
     def test_upload_init_rejects_file_larger_than_500mb(self):
         self.client.force_authenticate(self.student)
@@ -192,6 +213,124 @@ class WorkApiTests(TestCase):
         }, format='json')
 
         self.assertEqual(response.status_code, 400)
+
+    def test_chunked_upload_rejects_invalid_file_signature(self):
+        self.client.force_authenticate(self.student)
+        content = b'not actually a pdf file'
+        init_response = self.client.post('/api/uploads/init/', {
+            'file_name': 'fake.pdf',
+            'content_type': 'application/pdf',
+            'total_size': len(content),
+            'total_chunks': 1,
+        }, format='json')
+        upload_id = init_response.data['upload_id']
+        chunk = SimpleUploadedFile('fake.part0', content, content_type='application/octet-stream')
+        self.client.post(f'/api/uploads/{upload_id}/chunk/', {'index': 0, 'chunk': chunk}, format='multipart')
+
+        response = self.client.post(f'/api/uploads/{upload_id}/complete/')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(ChunkedUpload.objects.get(upload_id=upload_id).status, ChunkedUpload.Status.UPLOADING)
+
+    def test_expired_upload_session_cannot_receive_chunks(self):
+        self.client.force_authenticate(self.student)
+        init_response = self.client.post('/api/uploads/init/', {
+            'file_name': 'expired.pdf',
+            'content_type': 'application/pdf',
+            'total_size': 8,
+            'total_chunks': 1,
+        }, format='json')
+        upload = ChunkedUpload.objects.get(upload_id=init_response.data['upload_id'])
+        upload.expires_at = timezone.now() - timedelta(seconds=1)
+        upload.save(update_fields=['expires_at'])
+
+        response = self.client.post(
+            f'/api/uploads/{upload.upload_id}/chunk/',
+            {'index': 0, 'chunk': SimpleUploadedFile('expired.part0', b'%PDF-1.4')},
+            format='multipart',
+        )
+
+        self.assertEqual(response.status_code, 410)
+
+    def test_current_camp_endpoint_and_lists_are_isolated(self):
+        old_camp = TrainingCamp.objects.create(
+            name='Old camp',
+            slug='old-camp',
+            start_date='2025-07-01',
+            end_date='2025-07-05',
+        )
+        Work.objects.create(
+            camp=old_camp,
+            author=self.student,
+            title='Old approved work',
+            work_type=Work.WorkType.AI,
+            description='Should stay in history.',
+            status=Work.Status.APPROVED,
+        )
+        current_work = Work.objects.create(
+            camp=self.camp,
+            author=self.student,
+            title='Current approved work',
+            work_type=Work.WorkType.AI,
+            description='Should be visible now.',
+            status=Work.Status.APPROVED,
+        )
+        Course.objects.create(
+            camp=self.camp,
+            title='Current course',
+            teacher='teacher',
+            room='room',
+            date='2026-07-20',
+            start_time='09:00',
+            end_time='10:00',
+        )
+
+        camp_response = self.client.get('/api/camps/current/')
+        works_response = self.client.get('/api/works/')
+
+        self.assertEqual(camp_response.status_code, 200)
+        self.assertEqual(camp_response.data['id'], self.camp.id)
+        self.assertIn('2026-07-20', [str(value) for value in camp_response.data['training_dates']])
+        self.assertEqual([item['id'] for item in works_response.data], [current_work.id])
+
+    def test_vote_limit_resets_for_each_training_camp(self):
+        self.camp.vote_limit = 1
+        self.camp.save(update_fields=['vote_limit'])
+        old_camp = TrainingCamp.objects.create(
+            name='Old voting camp',
+            slug='old-voting-camp',
+            start_date='2025-07-01',
+            end_date='2025-07-05',
+            vote_limit=1,
+        )
+        old_work = Work.objects.create(
+            camp=old_camp,
+            author=self.other,
+            title='Old voted work',
+            work_type=Work.WorkType.AI,
+            description='Historical vote.',
+            status=Work.Status.APPROVED,
+        )
+        current_works = [
+            Work.objects.create(
+                camp=self.camp,
+                author=self.other,
+                title=f'Current vote work {index}',
+                work_type=Work.WorkType.AI,
+                description='Current camp vote.',
+                status=Work.Status.APPROVED,
+            )
+            for index in range(2)
+        ]
+        Vote.objects.create(user=self.student, work=old_work)
+        self.client.force_authenticate(self.student)
+
+        first_response = self.client.post(f'/api/works/{current_works[0].id}/vote/')
+        second_response = self.client.post(f'/api/works/{current_works[1].id}/vote/')
+
+        self.assertEqual(first_response.status_code, 201)
+        self.assertEqual(second_response.status_code, 400)
+        self.assertEqual(second_response.data['remaining_votes'], 0)
 
     def test_search_returns_backend_work_and_profile_results(self):
         self.client.force_authenticate(self.student)
@@ -211,6 +350,69 @@ class WorkApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['profiles'][0]['name'], '林小夏')
         self.assertEqual(response.data['works'][0]['title'], 'AI 入职欢迎海报')
+
+    def test_student_can_publish_normalized_real_tags(self):
+        self.client.force_authenticate(self.student)
+
+        response = self.client.post('/api/works/', {
+            'title': 'Tagged work',
+            'work_type': Work.WorkType.AI,
+            'description': 'A work with real persisted tags.',
+            'tags': '["AI 海报", "#ai 海报", "流程 Demo"]',
+        }, format='multipart')
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data['tags'], ['AI 海报', '流程 Demo'])
+        work = Work.objects.get(title='Tagged work')
+        self.assertEqual(list(work.tags.values_list('name', flat=True)), ['AI 海报', '流程 Demo'])
+        self.assertEqual(Tag.objects.count(), 2)
+
+    def test_popular_tags_use_only_current_approved_works(self):
+        popular = Tag.objects.create(name='热门实践')
+        pending_only = Tag.objects.create(name='待审标签')
+        old_only = Tag.objects.create(name='历史标签')
+        approved_works = [
+            Work.objects.create(
+                camp=self.camp,
+                author=self.student,
+                title=f'approved tagged {index}',
+                work_type=Work.WorkType.AI,
+                description='Approved tagged work.',
+                status=Work.Status.APPROVED,
+            )
+            for index in range(2)
+        ]
+        for work in approved_works:
+            work.tags.add(popular)
+        pending_work = Work.objects.create(
+            camp=self.camp,
+            author=self.student,
+            title='pending tagged',
+            work_type=Work.WorkType.AI,
+            description='Pending tagged work.',
+            status=Work.Status.PENDING,
+        )
+        pending_work.tags.add(pending_only)
+        old_camp = TrainingCamp.objects.create(
+            name='Tag history',
+            slug='tag-history',
+            start_date='2025-01-01',
+            end_date='2025-01-02',
+        )
+        old_work = Work.objects.create(
+            camp=old_camp,
+            author=self.student,
+            title='old tagged',
+            work_type=Work.WorkType.AI,
+            description='Old tagged work.',
+            status=Work.Status.APPROVED,
+        )
+        old_work.tags.add(old_only)
+
+        response = self.client.get('/api/tags/popular/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, [{'id': popular.id, 'name': '热门实践', 'work_count': 2}])
 
     def test_rejected_work_can_be_edited_and_resubmitted_by_owner(self):
         work = Work.objects.create(

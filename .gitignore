@@ -4,6 +4,13 @@ dist/
 backend/db.sqlite3
 backend/media/
 .env
+.env.local
+backend/backups/
+backend/loadtest*.sqlite3
+backend/*.log
+backend/load_tests/__pycache__/
+data-backup*.json
+pgdata/
 __pycache__/
 *.pyc
 .DS_Store
