@@ -28,7 +28,7 @@ class Command(BaseCommand):
         profile, _ = Profile.objects.get_or_create(user=user, defaults={'name': name, 'role': role})
         profile.name = name
         profile.role = role
-        profile.school = '浙江大学' if role == Profile.Role.STUDENT else ''
+        profile.workplace = '示例科技公司' if role == Profile.Role.STUDENT else ''
         profile.gender = Profile.Gender.UNKNOWN
         profile.zodiac = '天秤座' if role == Profile.Role.STUDENT else ''
         profile.mbti = 'ENFP' if role == Profile.Role.STUDENT else ''

@@ -370,7 +370,7 @@ button {
 .welcomeCeremony {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: 100;
   padding: clamp(18px, 4vw, 38px);
   background: #fff;
   display: grid;

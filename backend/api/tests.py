@@ -335,8 +335,8 @@ class WorkApiTests(TestCase):
     def test_search_returns_backend_work_and_profile_results(self):
         self.client.force_authenticate(self.student)
         self.student.profile.name = '林小夏'
-        self.student.profile.school = '浙江大学'
-        self.student.profile.save(update_fields=['name', 'school'])
+        self.student.profile.workplace = '示例科技公司'
+        self.student.profile.save(update_fields=['name', 'workplace'])
         Work.objects.create(
             author=self.student,
             title='AI 入职欢迎海报',
@@ -350,6 +350,33 @@ class WorkApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['profiles'][0]['name'], '林小夏')
         self.assertEqual(response.data['works'][0]['title'], 'AI 入职欢迎海报')
+
+    def test_student_can_update_workplace_mbti_and_zodiac_from_allowed_values(self):
+        self.client.force_authenticate(self.student)
+
+        response = self.client.patch('/api/me/', {
+            'workplace': '示例科技公司',
+            'mbti': Profile.Mbti.ENFP,
+            'zodiac': Profile.Zodiac.LIBRA,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.student.profile.refresh_from_db()
+        self.assertEqual(self.student.profile.workplace, '示例科技公司')
+        self.assertEqual(self.student.profile.mbti, Profile.Mbti.ENFP)
+        self.assertEqual(self.student.profile.zodiac, Profile.Zodiac.LIBRA)
+
+    def test_profile_rejects_unknown_mbti_and_zodiac_values(self):
+        self.client.force_authenticate(self.student)
+
+        response = self.client.patch('/api/me/', {
+            'mbti': 'ABCD',
+            'zodiac': '不存在的星座',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('mbti', response.data)
+        self.assertIn('zodiac', response.data)
 
     def test_student_can_publish_normalized_real_tags(self):
         self.client.force_authenticate(self.student)

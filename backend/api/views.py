@@ -415,7 +415,7 @@ class SearchView(APIView):
             Profile.objects.select_related('user')
             .filter(
                 Q(name__icontains=keyword)
-                | Q(school__icontains=keyword)
+                | Q(workplace__icontains=keyword)
                 | Q(mbti__icontains=keyword)
                 | Q(zodiac__icontains=keyword)
                 | Q(user__username__icontains=keyword)

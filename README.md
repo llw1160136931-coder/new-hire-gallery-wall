@@ -125,6 +125,35 @@ PATCH  /api/me/                 # multipart，可上传 avatar 文件
 .\.venv\Scripts\python.exe .\backend\manage.py cleanup_uploads
 ```
 
+## 批量导入学员账号
+
+学员名单 Excel 必须包含“姓名、账号、密码”列，可选“工作单位、性别”列。密码会通过 Django 哈希后写入数据库，不会保存明文；当前“年龄”等其他列会被忽略并在执行时提示。
+
+先在服务器执行检查，不改数据库：
+
+```bash
+python manage.py import_students /tmp/students.xlsx --dry-run
+```
+
+检查通过后正式导入：
+
+```bash
+python manage.py import_students /tmp/students.xlsx
+```
+
+默认遇到数据库中已经存在的账号会停止。如确实需要更新已有普通学员资料并重置密码，可显式增加 `--update-existing`。命令禁止覆盖管理员账号。导入完成后应立即删除服务器上的原始 Excel，名单和密码文件不得提交到 GitHub。
+
+默认还会按照系统密码规则拦截少于 8 位、纯数字或过于常见的密码。如果组织已经发放了一次性弱初始密码，且确认需要保持原密码，可显式增加 `--allow-weak-passwords`；使用后应要求学员尽快更换密码。
+
+管理员账号使用独立 Excel，必须包含“姓名、账号、密码、角色”列，其中角色必须为“管理员”。管理员密码始终执行强密码校验，不能使用弱密码开关：
+
+```bash
+python manage.py import_admins /tmp/admins.xlsx --dry-run
+python manage.py import_admins /tmp/admins.xlsx
+```
+
+管理员导入后具有系统审核管理权限，但不会成为 Django 超级管理员。默认禁止覆盖已有账号；显式使用 `--update-existing` 可以更新普通账号或现有管理员，但超级管理员始终禁止通过批量命令修改。
+
 ## 生产环境
 
 生产环境必须设置 `DJANGO_ENV=production` 和至少 32 位的 `DJANGO_SECRET_KEY`。系统会自动关闭 DEBUG、启用 HTTPS 跳转、安全 Cookie、HSTS 与 API 限流；缺少安全密钥时会拒绝启动。

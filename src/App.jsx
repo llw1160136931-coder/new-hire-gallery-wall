@@ -41,6 +41,19 @@ const genderOptions = [
   { value: "unknown", label: "未填写" },
 ];
 
+const mbtiOptions = [
+  "INTJ", "INTP", "ENTJ", "ENTP",
+  "INFJ", "INFP", "ENFJ", "ENFP",
+  "ISTJ", "ISFJ", "ESTJ", "ESFJ",
+  "ISTP", "ISFP", "ESTP", "ESFP",
+];
+
+const zodiacOptions = [
+  "白羊座", "金牛座", "双子座", "巨蟹座",
+  "狮子座", "处女座", "天秤座", "天蝎座",
+  "射手座", "摩羯座", "水瓶座", "双鱼座",
+];
+
 const fallbackTones = ["blue", "violet", "orange"];
 const MAX_WORK_UPLOAD_BYTES = 500 * 1024 * 1024;
 const CHUNK_SIZE = 5 * 1024 * 1024;
@@ -392,7 +405,7 @@ function WelcomeCeremony({ profile, onFinish }) {
                 上一页
               </button>
               {step === welcomeSteps.length - 1 ? (
-                <button onClick={onFinish} type="button">和小火花一起出发</button>
+                <button onClick={onFinish} type="button">进入系统</button>
               ) : (
                 <button onClick={() => move(step + 1)} type="button">下一页</button>
               )}
@@ -999,7 +1012,7 @@ function SearchResultsPanel({ keyword, onClear, onLike, onOpenWork, onVote, resu
       </div>
 
       {workResults.length === 0 && profileResults.length === 0 ? (
-        <EmptyState title="没有搜到结果" text="换个作品标题、同学名字、学校或 MBTI 试试。" />
+        <EmptyState title="没有搜到结果" text="换个作品标题、同学名字、工作单位或 MBTI 试试。" />
       ) : (
         <div className="searchResultGrid">
           <div>
@@ -1036,7 +1049,7 @@ function SearchResultsPanel({ keyword, onClear, onLike, onOpenWork, onVote, resu
                     )}
                     <div>
                       <h4>{profile.name}</h4>
-                      <p>{profile.school || "未填写学校"} · {profile.gender_label || "未填写"} · {profile.zodiac || "未填写星座"}</p>
+                      <p>{profile.workplace || "未填写工作单位"} · {profile.gender_label || "未填写"} · {profile.zodiac || "未填写星座"}</p>
                       <small>{profile.mbti || "MBTI 未填写"}</small>
                     </div>
                   </article>
@@ -1878,7 +1891,7 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
     try {
       const profilePayload = buildProfileFormData({
         name: draft.name,
-        school: draft.school,
+        workplace: draft.workplace,
         gender: draft.gender,
         zodiac: draft.zodiac,
         mbti: draft.mbti,
@@ -1983,8 +1996,8 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
             <input value={draft.name || ""} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
           </label>
           <label className="profileEditRow">
-            <span>学校</span>
-            <input value={draft.school || ""} onChange={(event) => setDraft({ ...draft, school: event.target.value })} />
+            <span>工作单位</span>
+            <input value={draft.workplace || ""} onChange={(event) => setDraft({ ...draft, workplace: event.target.value })} />
           </label>
           <label className="profileEditRow">
             <span>性别</span>
@@ -1996,15 +2009,21 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
           </label>
           <label className="profileEditRow">
             <span>星座</span>
-            <input value={draft.zodiac || ""} onChange={(event) => setDraft({ ...draft, zodiac: event.target.value })} />
+            <select value={draft.zodiac || ""} onChange={(event) => setDraft({ ...draft, zodiac: event.target.value })}>
+              <option value="">请选择星座</option>
+              {zodiacOptions.map((zodiac) => (
+                <option key={zodiac} value={zodiac}>{zodiac}</option>
+              ))}
+            </select>
           </label>
           <label className="profileEditRow">
             <span>MBTI</span>
-            <input
-              maxLength="4"
-              value={draft.mbti || ""}
-              onChange={(event) => setDraft({ ...draft, mbti: event.target.value.toUpperCase() })}
-            />
+            <select value={draft.mbti || ""} onChange={(event) => setDraft({ ...draft, mbti: event.target.value })}>
+              <option value="">请选择 MBTI</option>
+              {mbtiOptions.map((mbti) => (
+                <option key={mbti} value={mbti}>{mbti}</option>
+              ))}
+            </select>
           </label>
           <label className="profileEditRow profileEditTextarea">
             <span>个人简介</span>
@@ -2047,7 +2066,7 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
         <div className="profileHeroInfo">
           <h2>{profile.name || profile.username} <span>🔥</span></h2>
           <div className="profileMiniMeta">
-            <span>{profile.school || "未填写学校"}</span>
+            <span>{profile.workplace || "未填写工作单位"}</span>
             <span>{genderLabel(profile.gender)}</span>
             <span>{profile.zodiac || "未填写星座"}</span>
             <span>{profile.mbti || "MBTI"}</span>
@@ -2547,7 +2566,7 @@ function parseTagInput(value) {
 function buildProfileFormData(profile) {
   const formData = new FormData();
   formData.append("name", profile.name || "");
-  formData.append("school", profile.school || "");
+  formData.append("workplace", profile.workplace || "");
   formData.append("gender", profile.gender || "unknown");
   formData.append("zodiac", profile.zodiac || "");
   formData.append("mbti", profile.mbti || "");

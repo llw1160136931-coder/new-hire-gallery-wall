@@ -74,13 +74,45 @@ class Profile(models.Model):
         MALE = 'male', '男'
         OTHER = 'other', '其他'
 
+    class Mbti(models.TextChoices):
+        INTJ = 'INTJ', 'INTJ'
+        INTP = 'INTP', 'INTP'
+        ENTJ = 'ENTJ', 'ENTJ'
+        ENTP = 'ENTP', 'ENTP'
+        INFJ = 'INFJ', 'INFJ'
+        INFP = 'INFP', 'INFP'
+        ENFJ = 'ENFJ', 'ENFJ'
+        ENFP = 'ENFP', 'ENFP'
+        ISTJ = 'ISTJ', 'ISTJ'
+        ISFJ = 'ISFJ', 'ISFJ'
+        ESTJ = 'ESTJ', 'ESTJ'
+        ESFJ = 'ESFJ', 'ESFJ'
+        ISTP = 'ISTP', 'ISTP'
+        ISFP = 'ISFP', 'ISFP'
+        ESTP = 'ESTP', 'ESTP'
+        ESFP = 'ESFP', 'ESFP'
+
+    class Zodiac(models.TextChoices):
+        ARIES = '白羊座', '白羊座'
+        TAURUS = '金牛座', '金牛座'
+        GEMINI = '双子座', '双子座'
+        CANCER = '巨蟹座', '巨蟹座'
+        LEO = '狮子座', '狮子座'
+        VIRGO = '处女座', '处女座'
+        LIBRA = '天秤座', '天秤座'
+        SCORPIO = '天蝎座', '天蝎座'
+        SAGITTARIUS = '射手座', '射手座'
+        CAPRICORN = '摩羯座', '摩羯座'
+        AQUARIUS = '水瓶座', '水瓶座'
+        PISCES = '双鱼座', '双鱼座'
+
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='profile')
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.STUDENT)
     name = models.CharField(max_length=50)
     avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
-    school = models.CharField(max_length=100, blank=True)
-    mbti = models.CharField(max_length=4, blank=True)
-    zodiac = models.CharField(max_length=20, blank=True)
+    workplace = models.CharField(max_length=100, blank=True)
+    mbti = models.CharField(max_length=4, choices=Mbti.choices, blank=True)
+    zodiac = models.CharField(max_length=20, choices=Zodiac.choices, blank=True)
     gender = models.CharField(max_length=20, choices=Gender.choices, default=Gender.UNKNOWN)
     bio = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

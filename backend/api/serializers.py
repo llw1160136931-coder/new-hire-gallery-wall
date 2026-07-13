@@ -134,7 +134,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             'role',
             'name',
             'avatar',
-            'school',
+            'workplace',
             'mbti',
             'zodiac',
             'gender',
@@ -516,4 +516,4 @@ class PublicProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Profile
-        fields = ['username', 'name', 'avatar', 'school', 'mbti', 'zodiac', 'gender', 'gender_label', 'bio']
+        fields = ['username', 'name', 'avatar', 'workplace', 'mbti', 'zodiac', 'gender', 'gender_label', 'bio']

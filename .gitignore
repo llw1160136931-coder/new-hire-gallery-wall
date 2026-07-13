@@ -15,5 +15,7 @@ __pycache__/
 *.pyc
 .DS_Store
 *.xlsx
+backend/imports/
+outputs/
 ~$*
 UI设计/
