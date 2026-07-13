@@ -530,6 +530,54 @@ class WorkApiTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
 
+    def test_student_can_delete_own_work(self):
+        work = Work.objects.create(
+            camp=self.camp,
+            author=self.student,
+            title='自己的作品',
+            work_type=Work.WorkType.TRAINING,
+            description='学生应该可以删除自己的作品。',
+            status=Work.Status.APPROVED,
+        )
+        self.client.force_authenticate(self.student)
+
+        response = self.client.delete(f'/api/works/{work.id}/')
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Work.objects.filter(id=work.id).exists())
+
+    def test_student_cannot_delete_another_students_work(self):
+        work = Work.objects.create(
+            camp=self.camp,
+            author=self.student,
+            title='其他学员的作品',
+            work_type=Work.WorkType.AI,
+            description='不能被其他学员删除。',
+            status=Work.Status.APPROVED,
+        )
+        self.client.force_authenticate(self.other)
+
+        response = self.client.delete(f'/api/works/{work.id}/')
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(Work.objects.filter(id=work.id).exists())
+
+    def test_admin_can_delete_students_work(self):
+        work = Work.objects.create(
+            camp=self.camp,
+            author=self.student,
+            title='管理员可删除的作品',
+            work_type=Work.WorkType.TRAINING,
+            description='管理员应该可以删除学员作品。',
+            status=Work.Status.PENDING,
+        )
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.delete(f'/api/works/{work.id}/')
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Work.objects.filter(id=work.id).exists())
+
     def test_user_can_like_same_work_only_once(self):
         work = Work.objects.create(
             author=self.other,

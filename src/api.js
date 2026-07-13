@@ -157,6 +157,7 @@ export const api = {
   completeUpload: (uploadId) => apiRequest(`/uploads/${uploadId}/complete/`, { method: "POST" }),
   createWork: (work) => apiRequest("/works/", { method: "POST", body: work }),
   updateWork: (id, work) => apiRequest(`/works/${id}/`, { method: "PATCH", body: work }),
+  deleteWork: (id) => apiRequest(`/works/${id}/`, { method: "DELETE" }),
   likeWork: (id) => apiRequest(`/works/${id}/like/`, { method: "POST" }),
   voteWork: (id) => apiRequest(`/works/${id}/vote/`, { method: "POST" }),
   approveWork: (id) => apiRequest(`/works/${id}/approve/`, { method: "POST" }),

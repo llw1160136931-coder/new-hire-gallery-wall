@@ -13,8 +13,8 @@ import mascotUiUpload from "./assets/mascot-ui-upload-cut.png";
 const studentTabs = [
   { id: "feed", label: "灵感", icon: "✦" },
   { id: "works", label: "作品", icon: "▦" },
-  { id: "courses", label: "课程", icon: "◷" },
   { id: "publish", label: "发布", icon: "+" },
+  { id: "courses", label: "课程", icon: "◷" },
   { id: "profile", label: "我的", icon: "◌" },
 ];
 
@@ -195,13 +195,13 @@ function App() {
         <nav>
           {tabs.map((tab) => (
             <button
-              className={activeTab === tab.id ? "active" : ""}
+              className={`${activeTab === tab.id ? "active " : ""}nav-${tab.id}`}
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               type="button"
             >
-              <span>{tab.icon}</span>
-              {tab.label}
+              <span className="navIcon">{tab.icon}</span>
+              <span className="navLabel">{tab.label}</span>
             </button>
           ))}
         </nav>
@@ -212,7 +212,7 @@ function App() {
           <TopBar activeTab={activeTab} role={role} onLogout={logout} />
         )}
         {activeTab === "feed" && <FeedView camp={camp} role={role} />}
-        {activeTab === "works" && <WorksGalleryView />}
+        {activeTab === "works" && <WorksGalleryView role={role} />}
         {activeTab === "courses" && <CourseView camp={camp} />}
         {activeTab === "publish" && <PublishView camp={camp} />}
         {activeTab === "profile" && (
@@ -329,38 +329,14 @@ function LoginScreen({ error, onError, onLogin }) {
 
 function WelcomeCeremony({ profile, onFinish }) {
   const [step, setStep] = useState(0);
-  const [touchStart, setTouchStart] = useState(null);
   const current = welcomeSteps[step];
 
   function move(nextStep) {
     setStep(Math.max(0, Math.min(welcomeSteps.length - 1, nextStep)));
   }
 
-  function handleWheel(event) {
-    if (Math.abs(event.deltaY) < 18) {
-      return;
-    }
-    move(step + (event.deltaY > 0 ? 1 : -1));
-  }
-
-  function handleTouchStart(event) {
-    setTouchStart(event.touches[0]?.clientY ?? null);
-  }
-
-  function handleTouchEnd(event) {
-    if (touchStart === null) {
-      return;
-    }
-    const endY = event.changedTouches[0]?.clientY ?? touchStart;
-    const distance = touchStart - endY;
-    if (Math.abs(distance) > 42) {
-      move(step + (distance > 0 ? 1 : -1));
-    }
-    setTouchStart(null);
-  }
-
   return (
-    <section className={`welcomeCeremony scene${step}`} onTouchEnd={handleTouchEnd} onTouchStart={handleTouchStart} onWheel={handleWheel}>
+    <section className={`welcomeCeremony scene${step}`}>
       <div className="welcomeDeck">
         <div className="welcomeStage" aria-hidden="true">
           <div className="storySky">
@@ -410,7 +386,7 @@ function WelcomeCeremony({ profile, onFinish }) {
             ))}
           </div>
           <div className="welcomeMeta">
-            <span>{profile.name || profile.username}，上下滚动或滑动切换下一页</span>
+            <span>{profile.name || profile.username}，请点击按钮查看下一页</span>
             <div>
               <button disabled={step === 0} onClick={() => move(step - 1)} type="button">
                 上一页
@@ -418,7 +394,7 @@ function WelcomeCeremony({ profile, onFinish }) {
               {step === welcomeSteps.length - 1 ? (
                 <button onClick={onFinish} type="button">和小火花一起出发</button>
               ) : (
-                <button onClick={() => move(step + 1)} type="button">继续</button>
+                <button onClick={() => move(step + 1)} type="button">下一页</button>
               )}
             </div>
           </div>
@@ -790,7 +766,7 @@ function FeedView({ camp, role }) {
   );
 }
 
-function WorksGalleryView() {
+function WorksGalleryView({ role }) {
   const [works, setWorks] = useState([]);
   const [filter, setFilter] = useState("all");
   const [keyword, setKeyword] = useState("");
@@ -799,6 +775,7 @@ function WorksGalleryView() {
   const [error, setError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
   const [actionError, setActionError] = useState("");
+  const [deletingWorkId, setDeletingWorkId] = useState(null);
 
   async function loadWorks() {
     setLoading(true);
@@ -863,6 +840,24 @@ function WorksGalleryView() {
     }
   }
 
+  async function deleteWork(work) {
+    if (!window.confirm(`确定删除“${work.title}”吗？删除后无法恢复。`)) {
+      return;
+    }
+    setDeletingWorkId(work.id);
+    setActionMessage("");
+    setActionError("");
+    try {
+      await api.deleteWork(work.id);
+      setWorks((current) => current.filter((item) => item.id !== work.id));
+      setActionMessage("作品已删除。");
+    } catch (deleteError) {
+      setActionError(deleteError.message || "删除失败，请稍后重试");
+    } finally {
+      setDeletingWorkId(null);
+    }
+  }
+
   if (selectedWork) {
     return (
       <WorkDetailPage
@@ -919,8 +914,10 @@ function WorksGalleryView() {
             <GalleryWorkCard
               index={index}
               key={work.id}
+              deleting={deletingWorkId === work.id}
               onLike={() => likeWork(work)}
               onOpen={() => setSelectedWork(work)}
+              onDelete={role === "admin" ? () => deleteWork(work) : null}
               work={work}
             />
           ))}
@@ -931,7 +928,7 @@ function WorksGalleryView() {
   );
 }
 
-function GalleryWorkCard({ work, index, onLike, onOpen }) {
+function GalleryWorkCard({ work, index, deleting, onDelete, onLike, onOpen }) {
   const images = getWorkImages(work);
   const image = images[0] || getWorkImage(work);
   const isVideo = work.media_type === "video" && work.attachment;
@@ -977,6 +974,11 @@ function GalleryWorkCard({ work, index, onLike, onOpen }) {
             ♡ <span>{work.like_count ?? 0}</span>
           </button>
         </div>
+        {onDelete && (
+          <button className="galleryDelete" disabled={deleting} onClick={onDelete} type="button">
+            {deleting ? "删除中..." : "管理员删除"}
+          </button>
+        )}
       </div>
     </article>
   );
@@ -1463,6 +1465,14 @@ function ReviewView() {
     await reviewSingle(async () => api.approveWork(id), "已通过 1 个作品。");
   }
 
+  async function deletePendingWork(work) {
+    if (!window.confirm(`确定删除学员“${work.author_name || "未知学员"}”的作品“${work.title}”吗？删除后无法恢复。`)) {
+      return;
+    }
+    await reviewSingle(async () => api.deleteWork(work.id), "作品已删除。");
+    setPreviewWork((current) => (current?.id === work.id ? null : current));
+  }
+
   async function reviewSingle(task, successText) {
     setProcessing(true);
     setError("");
@@ -1697,6 +1707,7 @@ function ReviewView() {
                 <button disabled={processing} onClick={() => approve(item.id)} type="button">通过</button>
                 <button disabled={processing} onClick={() => openReject([item.id])} type="button">打回</button>
                 <button onClick={() => setPreviewWork(item)} type="button">预览</button>
+                <button className="dangerButton" disabled={processing} onClick={() => deletePendingWork(item)} type="button">删除</button>
               </div>
             </article>
           ))}
@@ -1808,6 +1819,7 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
   const [workFileInputKey, setWorkFileInputKey] = useState(0);
   const [workUploadProgress, setWorkUploadProgress] = useState(null);
   const [resubmitting, setResubmitting] = useState(false);
+  const [deletingWorkId, setDeletingWorkId] = useState(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -1820,6 +1832,28 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
       setMyWorks(await api.myWorks());
     } catch {
       setMyWorks([]);
+    }
+  }
+
+  async function deleteOwnWork(work) {
+    if (!window.confirm(`确定删除自己的作品“${work.title}”吗？删除后无法恢复。`)) {
+      return;
+    }
+    setDeletingWorkId(work.id);
+    setMessage("");
+    setError("");
+    try {
+      await api.deleteWork(work.id);
+      setMyWorks((current) => current.filter((item) => item.id !== work.id));
+      if (editingWorkId === work.id) {
+        setEditingWorkId(null);
+        setWorkDraft(null);
+      }
+      setMessage("自己的作品已删除。");
+    } catch (deleteError) {
+      setError(deleteError.message || "删除失败，请稍后重试");
+    } finally {
+      setDeletingWorkId(null);
     }
   }
 
@@ -2048,6 +2082,7 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
           <span>获票</span>
         </strong>
       </div>
+      {error && <p className="errorText profileMessage">{error}</p>}
       {message && <p className="successText profileMessage">{message}</p>}
 
       <div className="profileWorks">
@@ -2075,6 +2110,14 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
                   <h4>{work.title}</h4>
                   <p>赞 {work.like_count ?? 0} · 票 {work.vote_count ?? 0}</p>
                   <small>更新于 {formatWorkDate(work.updated_at || work.created_at)}</small>
+                  <button
+                    className="profileWorkDelete"
+                    disabled={deletingWorkId === work.id}
+                    onClick={() => deleteOwnWork(work)}
+                    type="button"
+                  >
+                    {deletingWorkId === work.id ? "删除中..." : "删除自己的作品"}
+                  </button>
                 </div>
                 <strong className={work.status}>{work.status_label}</strong>
                 {work.status === "rejected" && (

@@ -177,9 +177,15 @@ class WorkViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         work = self.get_object()
-        if not self._can_edit_work(work):
+        if not self._can_delete_work(work):
             self.permission_denied(request, message='只能删除自己的作品')
         return super().destroy(request, *args, **kwargs)
+
+    def _can_delete_work(self, work):
+        user = self.request.user
+        profile = getattr(user, 'profile', None)
+        is_admin = user.is_staff or getattr(profile, 'role', None) == Profile.Role.ADMIN
+        return is_admin or work.author_id == user.id
 
     def _can_edit_work(self, work):
         user = self.request.user

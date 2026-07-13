@@ -1,8 +1,8 @@
 from django.contrib.auth.models import User
-from django.db.models.signals import post_save
+from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
-from .models import Profile
+from .models import Profile, Work, WorkImage
 
 
 @receiver(post_save, sender=User)
@@ -13,3 +13,17 @@ def ensure_profile(sender, instance, created, **kwargs):
             user=instance,
             defaults={'name': instance.username, 'role': role},
         )
+
+
+@receiver(post_delete, sender=WorkImage)
+def delete_work_image_file(sender, instance, **kwargs):
+    if instance.image:
+        instance.image.delete(save=False)
+
+
+@receiver(post_delete, sender=Work)
+def delete_work_files(sender, instance, **kwargs):
+    for field_name in ('image', 'attachment'):
+        uploaded_file = getattr(instance, field_name, None)
+        if uploaded_file:
+            uploaded_file.delete(save=False)
