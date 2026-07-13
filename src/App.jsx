@@ -12,6 +12,7 @@ import mascotUiUpload from "./assets/mascot-ui-upload-cut.png";
 
 const studentTabs = [
   { id: "feed", label: "灵感", icon: "✦" },
+  { id: "works", label: "作品", icon: "▦" },
   { id: "courses", label: "课程", icon: "◷" },
   { id: "publish", label: "发布", icon: "+" },
   { id: "profile", label: "我的", icon: "◌" },
@@ -19,12 +20,14 @@ const studentTabs = [
 
 const adminTabs = [
   { id: "review", label: "审核台", icon: "✓" },
-  { id: "feed", label: "作品预览", icon: "✦" },
+  { id: "feed", label: "首页预览", icon: "✦" },
+  { id: "works", label: "作品", icon: "▦" },
   { id: "courses", label: "课程", icon: "◷" },
 ];
 
 const viewTitles = {
   feed: "发现同学们的作品",
+  works: "全部作品",
   courses: "培训课程表",
   publish: "发布作品",
   profile: "个人主页",
@@ -205,10 +208,11 @@ function App() {
       </aside>
 
       <main className="content">
-        {!(role === "student" && (activeTab === "feed" || activeTab === "profile")) && (
+        {!(role === "student" && (activeTab === "feed" || activeTab === "works" || activeTab === "profile")) && (
           <TopBar activeTab={activeTab} role={role} onLogout={logout} />
         )}
         {activeTab === "feed" && <FeedView camp={camp} role={role} />}
+        {activeTab === "works" && <WorksGalleryView />}
         {activeTab === "courses" && <CourseView camp={camp} />}
         {activeTab === "publish" && <PublishView camp={camp} />}
         {activeTab === "profile" && (
@@ -783,6 +787,198 @@ function FeedView({ camp, role }) {
       )}
       {selectedCourse && <CourseDetailModal course={selectedCourse} onClose={() => setSelectedCourse(null)} />}
     </section>
+  );
+}
+
+function WorksGalleryView() {
+  const [works, setWorks] = useState([]);
+  const [filter, setFilter] = useState("all");
+  const [keyword, setKeyword] = useState("");
+  const [selectedWork, setSelectedWork] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
+  const [actionError, setActionError] = useState("");
+
+  async function loadWorks() {
+    setLoading(true);
+    setError("");
+    try {
+      setWorks(await api.works(filter));
+    } catch (loadError) {
+      setError(loadError.message || "作品加载失败，请稍后重试");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadWorks();
+  }, [filter]);
+
+  const visibleWorks = useMemo(() => {
+    const normalizedKeyword = keyword.trim().toLowerCase();
+    if (!normalizedKeyword) {
+      return works;
+    }
+    return works.filter((work) => [
+      work.title,
+      work.description,
+      work.author_name,
+      ...(work.tags || []),
+    ].some((value) => String(value || "").toLowerCase().includes(normalizedKeyword)));
+  }, [keyword, works]);
+
+  function syncWork(nextWork) {
+    if (!nextWork) {
+      return;
+    }
+    setWorks((current) => current.map((work) => (work.id === nextWork.id ? nextWork : work)));
+    setSelectedWork((current) => (current?.id === nextWork.id ? nextWork : current));
+  }
+
+  async function likeWork(work) {
+    setActionMessage("");
+    setActionError("");
+    try {
+      const response = await api.likeWork(work.id);
+      syncWork(response?.work);
+      setActionMessage(response?.detail || "点赞成功");
+    } catch (actionFailure) {
+      syncWork(actionFailure.details?.work);
+      setActionError(actionFailure.message || "点赞失败");
+    }
+  }
+
+  async function voteWork(work) {
+    setActionMessage("");
+    setActionError("");
+    try {
+      const response = await api.voteWork(work.id);
+      syncWork(response?.work);
+      setActionMessage(response?.detail || "投票成功");
+    } catch (actionFailure) {
+      syncWork(actionFailure.details?.work);
+      setActionError(actionFailure.message || "投票失败");
+    }
+  }
+
+  if (selectedWork) {
+    return (
+      <WorkDetailPage
+        actionError={actionError}
+        actionMessage={actionMessage}
+        onBack={() => setSelectedWork(null)}
+        onLike={() => likeWork(selectedWork)}
+        onVote={() => voteWork(selectedWork)}
+        work={selectedWork}
+      />
+    );
+  }
+
+  return (
+    <section className="worksGalleryPage">
+      <header className="worksGalleryHeader">
+        <div>
+          <span>COMMUNITY GALLERY</span>
+          <h1>大家的作品</h1>
+          <p>向下滑动，看看同学们最新发布的灵感与成果。</p>
+        </div>
+        <strong>{visibleWorks.length}<small> 个作品</small></strong>
+      </header>
+
+      <div className="worksGalleryToolbar">
+        <div className="worksGalleryFilters" aria-label="作品分类">
+          <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")} type="button">全部</button>
+          <button className={filter === "training" ? "active" : ""} onClick={() => setFilter("training")} type="button">培训作品</button>
+          <button className={filter === "ai" ? "active" : ""} onClick={() => setFilter("ai")} type="button">AI 作品</button>
+        </div>
+        <label className="worksGallerySearch">
+          <span>⌕</span>
+          <input aria-label="搜索作品" onChange={(event) => setKeyword(event.target.value)} placeholder="搜索标题、作者或标签" value={keyword} />
+          {keyword && <button aria-label="清空搜索" onClick={() => setKeyword("")} type="button">×</button>}
+        </label>
+      </div>
+
+      {actionError && <p className="errorText interactionNotice">{actionError}</p>}
+      {actionMessage && <p className="successText interactionNotice">{actionMessage}</p>}
+      {error && <p className="errorText">{error}</p>}
+
+      {loading ? (
+        <div className="galleryLoadingGrid" aria-label="正在加载作品">
+          {Array.from({ length: 8 }, (_, index) => <span key={index} />)}
+        </div>
+      ) : visibleWorks.length === 0 ? (
+        <EmptyState
+          title={keyword ? "没有找到相关作品" : "还没有已发布作品"}
+          text={keyword ? "换一个标题、作者或标签试试。" : "作品通过审核后会显示在这里。"}
+        />
+      ) : (
+        <div className="worksWaterfall">
+          {visibleWorks.map((work, index) => (
+            <GalleryWorkCard
+              index={index}
+              key={work.id}
+              onLike={() => likeWork(work)}
+              onOpen={() => setSelectedWork(work)}
+              work={work}
+            />
+          ))}
+        </div>
+      )}
+      {!loading && visibleWorks.length > 0 && <p className="galleryEnd">— 已经看到全部作品啦 —</p>}
+    </section>
+  );
+}
+
+function GalleryWorkCard({ work, index, onLike, onOpen }) {
+  const images = getWorkImages(work);
+  const image = images[0] || getWorkImage(work);
+  const isVideo = work.media_type === "video" && work.attachment;
+  const tone = fallbackTones[index % fallbackTones.length];
+
+  return (
+    <article className="galleryWorkCard">
+      <button className="galleryWorkCover" onClick={onOpen} type="button">
+        {isVideo ? (
+          <>
+            <video muted playsInline preload="metadata" src={work.attachment} />
+            <span className="galleryPlayIcon">▶</span>
+          </>
+        ) : image ? (
+          <img loading="lazy" src={image} alt={work.title} />
+        ) : (
+          <div className={`galleryGenerated ${tone}`}>
+            <span>{mediaTypeLabel(work)}</span>
+            <strong>{work.title}</strong>
+          </div>
+        )}
+        {images.length > 1 && <span className="galleryImageCount">▣ {images.length}</span>}
+      </button>
+      <div className="galleryWorkInfo">
+        <button className="galleryWorkTitle" onClick={onOpen} type="button">
+          <strong>{work.title}</strong>
+        </button>
+        {(work.tags || []).length > 0 && (
+          <div className="galleryWorkTags">
+            {(work.tags || []).slice(0, 2).map((tag) => <span key={tag}>#{tag}</span>)}
+          </div>
+        )}
+        <div className="galleryWorkMeta">
+          <button className="galleryAuthor" onClick={onOpen} type="button">
+            {work.author_avatar ? (
+              <img src={work.author_avatar} alt="" />
+            ) : (
+              <span>{(work.author_name || "新").slice(0, 1)}</span>
+            )}
+            <small>{work.author_name || "新员工"}</small>
+          </button>
+          <button className="galleryLike" onClick={onLike} type="button" aria-label={`喜欢 ${work.title}`}>
+            ♡ <span>{work.like_count ?? 0}</span>
+          </button>
+        </div>
+      </div>
+    </article>
   );
 }
 
