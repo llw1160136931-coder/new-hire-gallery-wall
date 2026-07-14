@@ -71,6 +71,25 @@ class WorkApiTests(TestCase):
 
         self.assertEqual(response.status_code, 401)
 
+    def test_me_returns_role_from_authenticated_account(self):
+        self.client.force_authenticate(self.student)
+        student_response = self.client.get('/api/me/')
+
+        self.client.force_authenticate(self.admin)
+        admin_response = self.client.get('/api/me/')
+
+        self.assertEqual(student_response.status_code, 200)
+        self.assertEqual(student_response.data['role'], Profile.Role.STUDENT)
+        self.assertEqual(admin_response.status_code, 200)
+        self.assertEqual(admin_response.data['role'], Profile.Role.ADMIN)
+
+    def test_student_cannot_access_admin_review_queue(self):
+        self.client.force_authenticate(self.student)
+
+        response = self.client.get('/api/works/pending/')
+
+        self.assertEqual(response.status_code, 403)
+
     def test_refresh_token_returns_new_access_token(self):
         login_response = self.client.post('/api/auth/token/', {
             'username': 'student',

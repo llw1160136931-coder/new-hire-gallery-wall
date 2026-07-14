@@ -249,8 +249,8 @@ function shouldShowWelcome(profile, camp) {
 }
 
 function LoginScreen({ error, onError, onLogin }) {
-  const [username, setUsername] = useState("student");
-  const [password, setPassword] = useState("Student12345");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   async function submit(event) {
@@ -264,12 +264,6 @@ function LoginScreen({ error, onError, onLogin }) {
     } finally {
       setSubmitting(false);
     }
-  }
-
-  function fillDemo(nextUsername, nextPassword) {
-    setUsername(nextUsername);
-    setPassword(nextPassword);
-    onError("");
   }
 
   return (
@@ -311,14 +305,6 @@ function LoginScreen({ error, onError, onLogin }) {
               {submitting ? "登录中..." : "登录系统"}
             </button>
           </form>
-          <div className="demoAccounts">
-            <button onClick={() => fillDemo("student", "Student12345")} type="button">
-              学员演示
-            </button>
-            <button onClick={() => fillDemo("admin", "Admin12345")} type="button">
-              管理员演示
-            </button>
-          </div>
         </div>
         <div className="loginVisual">
           <div className="loginMascotPoster">
@@ -1215,6 +1201,28 @@ function WorkDetailPage({ work, onBack, onLike, onVote, actionMessage, actionErr
 }
 
 function CourseDetailModal({ course, onClose }) {
+  useEffect(() => {
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousPageOverflow = document.documentElement.style.overflow;
+
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
+    function closeOnEscape(event) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    document.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousPageOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [onClose]);
+
   return (
     <div className="courseDetailOverlay" onClick={onClose} role="presentation">
       <article className="courseDetailCard" onClick={(event) => event.stopPropagation()} role="dialog" aria-label="课程详情" aria-modal="true">

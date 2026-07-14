@@ -238,22 +238,6 @@ button {
   box-shadow: 0 12px 22px rgba(255, 31, 47, 0.24);
 }
 
-.demoAccounts {
-  margin-top: 14px;
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.demoAccounts button {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 10px 14px;
-  background: #fff;
-  color: var(--text);
-  font-weight: 900;
-}
-
 .loginActions button,
 .quietButton,
 .filterRow button,
@@ -2109,8 +2093,10 @@ button {
 .courseDetailOverlay {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: 120;
   padding: 22px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: rgba(18, 18, 22, 0.34);
   backdrop-filter: blur(8px);
   display: grid;
@@ -2120,6 +2106,11 @@ button {
 .courseDetailCard {
   position: relative;
   width: min(560px, 100%);
+  max-height: calc(100vh - 44px);
+  max-height: calc(100dvh - 44px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   border: 1px solid #ffd7d7;
   border-radius: 28px;
   padding: 26px;
@@ -3770,11 +3761,9 @@ button:disabled {
 @keyframes appEnter {
   from {
     opacity: 0;
-    transform: translateY(8px);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
 
@@ -4117,6 +4106,48 @@ button:disabled {
 
   .content {
     padding: 18px 18px calc(122px + env(safe-area-inset-bottom));
+  }
+
+  .courseDetailOverlay {
+    padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
+    place-items: start center;
+  }
+
+  .courseDetailCard {
+    width: 100%;
+    max-height: calc(100vh - 24px);
+    max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    border-radius: 24px;
+    padding: 20px 18px;
+  }
+
+  .courseDetailClose {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    margin: 0 0 -36px auto;
+    display: grid;
+    place-items: center;
+  }
+
+  .courseDetailHead h2 {
+    font-size: clamp(25px, 8vw, 34px);
+  }
+
+  .courseDetailMeta {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .courseDetailMeta strong {
+    display: grid;
+    grid-template-columns: 84px minmax(0, 1fr);
+    align-items: start;
+    gap: 8px;
+  }
+
+  .courseDetailMeta span {
+    margin-top: 0;
   }
 
   .worksGalleryHeader {
