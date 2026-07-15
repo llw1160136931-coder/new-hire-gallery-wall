@@ -3,6 +3,8 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenVerifyView
 
 from .views import (
+    AdminAttendanceGenerateView,
+    AdminAttendanceOverviewView,
     CourseViewSet,
     CurrentTrainingCampView,
     LeaderboardView,
@@ -10,6 +12,8 @@ from .views import (
     PopularTagView,
     RegisterView,
     SearchView,
+    StudentAttendanceCheckInView,
+    StudentAttendanceTodayView,
     ThrottledTokenObtainPairView,
     ThrottledTokenRefreshView,
     UploadChunkView,
@@ -28,6 +32,10 @@ urlpatterns = [
     path('auth/token/refresh/', ThrottledTokenRefreshView.as_view(), name='token_refresh'),
     path('auth/token/verify/', TokenVerifyView.as_view(), name='token_verify'),
     path('me/', MeView.as_view(), name='me'),
+    path('attendance/today/', StudentAttendanceTodayView.as_view(), name='attendance-today'),
+    path('attendance/check-in/', StudentAttendanceCheckInView.as_view(), name='attendance-check-in'),
+    path('attendance/admin/overview/', AdminAttendanceOverviewView.as_view(), name='attendance-admin-overview'),
+    path('attendance/admin/generate/', AdminAttendanceGenerateView.as_view(), name='attendance-admin-generate'),
     path('camps/current/', CurrentTrainingCampView.as_view(), name='current-training-camp'),
     path('leaderboard/', LeaderboardView.as_view(), name='leaderboard'),
     path('tags/popular/', PopularTagView.as_view(), name='popular-tags'),

@@ -20,6 +20,7 @@ const studentTabs = [
 
 const adminTabs = [
   { id: "review", label: "审核台", icon: "✓" },
+  { id: "attendance", label: "签到台", icon: "◎" },
   { id: "feed", label: "首页预览", icon: "✦" },
   { id: "works", label: "作品", icon: "▦" },
   { id: "courses", label: "课程", icon: "◷" },
@@ -32,6 +33,7 @@ const viewTitles = {
   publish: "发布作品",
   profile: "个人主页",
   review: "内容审核台",
+  attendance: "签到管理台",
 };
 
 const genderOptions = [
@@ -226,12 +228,13 @@ function App() {
         )}
         {activeTab === "feed" && <FeedView camp={camp} role={role} />}
         {activeTab === "works" && <WorksGalleryView role={role} />}
-        {activeTab === "courses" && <CourseView camp={camp} />}
+        {activeTab === "courses" && <CourseView camp={camp} role={role} />}
         {activeTab === "publish" && <PublishView camp={camp} />}
         {activeTab === "profile" && (
           <ProfileView profile={profile} onLogout={logout} onProfileSaved={setProfile} onReplayWelcome={replayWelcome} />
         )}
         {activeTab === "review" && role === "admin" && <ReviewView />}
+        {activeTab === "attendance" && role === "admin" && <AdminAttendanceView />}
       </main>
 
       {role === "student" ? <StudentRail /> : <AdminRail />}
@@ -1255,7 +1258,105 @@ function CourseDetailModal({ course, onClose }) {
   );
 }
 
-function CourseView({ camp }) {
+function StudentAttendancePanel() {
+  const [attendance, setAttendance] = useState(null);
+  const [code, setCode] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function loadAttendance({ quiet = false } = {}) {
+    if (!quiet) setLoading(true);
+    try {
+      setAttendance(await api.attendanceToday());
+      setError("");
+    } catch (attendanceError) {
+      setError(attendanceError.message || "签到状态加载失败");
+    } finally {
+      if (!quiet) setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadAttendance();
+    const timer = window.setInterval(() => loadAttendance({ quiet: true }), 30000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  async function submitAttendance(event) {
+    event.preventDefault();
+    setSubmitting(true);
+    setMessage("");
+    setError("");
+    try {
+      const result = await api.attendanceCheckIn(code);
+      setMessage(result.detail || "签到成功");
+      setCode("");
+      await loadAttendance({ quiet: true });
+    } catch (attendanceError) {
+      setError(attendanceError.message || "签到失败，请检查签到码");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const currentSlot = attendance?.slots?.find((slot) => slot.slot === attendance.current_slot);
+  const canSubmit = Boolean(currentSlot?.available && code.length === 5 && !submitting);
+
+  return (
+    <section className="studentAttendancePanel">
+      <div className="attendancePanelHead">
+        <div>
+          <span>今日签到</span>
+          <h2>{attendance?.date || "正在读取服务器时间"}</h2>
+          <p>签到时间和结果以后端服务器为准，逾期不能补签。</p>
+        </div>
+        <strong>{currentSlot ? `${currentSlot.label} · ${currentSlot.window}` : "当前不在签到时段"}</strong>
+      </div>
+
+      {loading ? (
+        <div className="loadingCard">正在加载签到状态...</div>
+      ) : (
+        <>
+          <div className="attendanceSlotStrip">
+            {(attendance?.slots || []).map((slot) => (
+              <article className={`${slot.state} ${slot.slot === attendance.current_slot ? "current" : ""}`} key={slot.slot}>
+                <span>{slot.label}</span>
+                <strong>{slot.window}</strong>
+                <em>{attendanceStateLabel(slot)}</em>
+              </article>
+            ))}
+          </div>
+
+          <form className="attendanceCheckInForm" onSubmit={submitAttendance}>
+            <label>
+              输入管理员公布的 5 位签到码
+              <input
+                aria-label="5 位签到码"
+                autoComplete="one-time-code"
+                disabled={!currentSlot?.available || currentSlot?.signed}
+                inputMode="numeric"
+                maxLength="5"
+                onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 5))}
+                pattern="\d{5}"
+                placeholder="请输入 5 位数字"
+                value={code}
+              />
+            </label>
+            <button disabled={!canSubmit} type="submit">
+              {submitting ? "签到中..." : currentSlot?.signed ? "本时段已签到" : currentSlot?.available ? "立即签到" : "签到暂未开放"}
+            </button>
+          </form>
+        </>
+      )}
+      {error && <p className="errorText">{error}</p>}
+      {message && <p className="successText">{message}</p>}
+    </section>
+  );
+}
+
+function CourseView({ camp, role }) {
   const [courses, setCourses] = useState([]);
   const [selectedCourse, setSelectedCourse] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1276,27 +1377,185 @@ function CourseView({ camp }) {
   }, []);
 
   return (
-    <section className="sectionPanel">
-      <div className="panelTitle">
-        <span>课程表</span>
-        <h2>{camp?.name || "当前培训期"}</h2>
-      </div>
-      {error && <p className="errorText">{error}</p>}
-      {loading ? (
-        <div className="loadingCard">正在加载课程...</div>
-      ) : (
-        <div className="courseGrid">
-          {courses.map((course) => (
-            <button className={`courseCard ${course.status}`} key={course.id} onClick={() => setSelectedCourse(course)} type="button">
-              <span>{course.status_label}</span>
-              <h3>{course.title}</h3>
-              <p>{course.topic} · {course.teacher} · {course.room}</p>
-              <strong>{formatDate(course.date)} {formatCourseTime(course)}</strong>
-            </button>
-          ))}
+    <div className="courseScene">
+      {role === "student" && <StudentAttendancePanel />}
+      <section className="sectionPanel">
+        <div className="panelTitle">
+          <span>课程表</span>
+          <h2>{camp?.name || "当前培训期"}</h2>
         </div>
+        {error && <p className="errorText">{error}</p>}
+        {loading ? (
+          <div className="loadingCard">正在加载课程...</div>
+        ) : (
+          <div className="courseGrid">
+            {courses.map((course) => (
+              <button className={`courseCard ${course.status}`} key={course.id} onClick={() => setSelectedCourse(course)} type="button">
+                <span>{course.status_label}</span>
+                <h3>{course.title}</h3>
+                <p>{course.topic} · {course.teacher} · {course.room}</p>
+                <strong>{formatDate(course.date)} {formatCourseTime(course)}</strong>
+              </button>
+            ))}
+          </div>
+        )}
+        {selectedCourse && <CourseDetailModal course={selectedCourse} onClose={() => setSelectedCourse(null)} />}
+      </section>
+    </div>
+  );
+}
+
+function AdminAttendanceView() {
+  const [selectedDate, setSelectedDate] = useState(() => dateInputValue(new Date()));
+  const [overview, setOverview] = useState(null);
+  const [selectedSlot, setSelectedSlot] = useState("morning");
+  const [listMode, setListMode] = useState("signed");
+  const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function loadOverview(date = selectedDate, { quiet = false } = {}) {
+    if (!quiet) setLoading(true);
+    try {
+      const data = await api.adminAttendance(date);
+      setOverview(data);
+      setSelectedSlot((current) => {
+        if (data.slots.some((slot) => slot.slot === current && slot.generated)) return current;
+        return data.current_slot || data.slots.find((slot) => slot.generated)?.slot || "morning";
+      });
+      setError("");
+    } catch (attendanceError) {
+      setError(attendanceError.message || "签到数据加载失败");
+    } finally {
+      if (!quiet) setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadOverview(selectedDate);
+    const timer = window.setInterval(() => loadOverview(selectedDate, { quiet: true }), 15000);
+    return () => window.clearInterval(timer);
+  }, [selectedDate]);
+
+  async function generateCode() {
+    setGenerating(true);
+    setMessage("");
+    setError("");
+    try {
+      const result = await api.generateAttendance();
+      setMessage(`${result.slot_label}签到码已生成：${result.code}`);
+    } catch (attendanceError) {
+      setError(attendanceError.message || "签到码生成失败");
+    } finally {
+      await loadOverview(selectedDate, { quiet: true });
+      setGenerating(false);
+    }
+  }
+
+  const activeSlot = overview?.slots?.find((slot) => slot.slot === overview.current_slot);
+  const currentData = overview?.slots?.find((slot) => slot.slot === selectedSlot) || overview?.slots?.[0];
+  const displayedStudents = listMode === "signed" ? currentData?.records || [] : currentData?.absent_students || [];
+  const canGenerate = Boolean(activeSlot && activeSlot.state === "active" && !activeSlot.generated);
+
+  return (
+    <section className="sectionPanel attendanceAdminScene">
+      <div className="attendanceAdminHero">
+        <div className="panelTitle">
+          <span>仅管理员可见</span>
+          <h2>签到管理台</h2>
+          <p>系统按服务器时间开放签到；每个时段只能生成一次，所有管理员共享同一个签到码。</p>
+        </div>
+        <div className="attendanceAdminControls">
+          <label>
+            查看日期
+            <input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} />
+          </label>
+          <button disabled={!canGenerate || generating} onClick={generateCode} type="button">
+            {generating ? "生成中..." : activeSlot?.generated ? "本时段已生成" : activeSlot ? `生成${activeSlot.label}签到码` : "当前不可生成"}
+          </button>
+        </div>
+      </div>
+
+      {error && <p className="errorText">{error}</p>}
+      {message && <p className="successText">{message}</p>}
+
+      {loading ? (
+        <div className="loadingCard">正在加载签到管理数据...</div>
+      ) : (
+        <>
+          <div className="attendanceMetrics">
+            <strong>{overview?.student_count || 0}<span>学员总数</span></strong>
+            <strong>{overview?.slots?.filter((slot) => slot.generated).length || 0}<span>今日已生成场次</span></strong>
+            <strong>{overview?.slots?.reduce((total, slot) => total + slot.signed_count, 0) || 0}<span>当日签到人次</span></strong>
+          </div>
+
+          <div className="attendanceAdminSlots">
+            {(overview?.slots || []).map((slot) => (
+              <button
+                className={`${selectedSlot === slot.slot ? "selected" : ""} ${slot.state}`}
+                key={slot.slot}
+                onClick={() => { setSelectedSlot(slot.slot); setListMode("signed"); }}
+                type="button"
+              >
+                <span>{slot.label} · {slot.window}</span>
+                <strong>{slot.generated ? slot.code : "未生成"}</strong>
+                <small>
+                  {slot.generated
+                    ? `${slot.created_by || "管理员"}生成 · 已签到 ${slot.signed_count}/${overview.student_count}`
+                    : attendanceAdminStateLabel(slot)}
+                </small>
+              </button>
+            ))}
+          </div>
+
+          <section className="attendanceRoster">
+            <div className="attendanceRosterHead">
+              <div>
+                <span>{currentData?.label} · {currentData?.window}</span>
+                <h3>签到明细</h3>
+              </div>
+              <div>
+                <button className={listMode === "signed" ? "active" : ""} onClick={() => setListMode("signed")} type="button">
+                  已签到 {currentData?.signed_count || 0}
+                </button>
+                <button
+                  className={listMode === "absent" ? "active" : ""}
+                  disabled={!currentData?.generated}
+                  onClick={() => setListMode("absent")}
+                  type="button"
+                >
+                  未签到 {currentData?.absent_count ?? "-"}
+                </button>
+              </div>
+            </div>
+
+            {!currentData?.generated ? (
+              <EmptyState title="本时段尚未生成签到码" text="只有当前签到时段可以生成，不能提前生成或逾期补生成。" />
+            ) : displayedStudents.length === 0 ? (
+              <EmptyState
+                title={listMode === "signed" ? "暂时还没有学员签到" : "所有学员都已签到"}
+                text="页面每 15 秒自动刷新一次，也可以切换日期或场次查看。"
+              />
+            ) : (
+              <div className="attendanceTable" role="table">
+                <div className="attendanceTableRow attendanceTableHeader" role="row">
+                  <span>姓名</span>
+                  <span>账号</span>
+                  <span>{listMode === "signed" ? "签到时间" : "状态"}</span>
+                </div>
+                {displayedStudents.map((student) => (
+                  <div className="attendanceTableRow" key={student.student_id} role="row">
+                    <strong>{student.name}</strong>
+                    <span>{student.username}</span>
+                    <span>{listMode === "signed" ? formatFullDate(student.signed_at) : "未签到"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </>
       )}
-      {selectedCourse && <CourseDetailModal course={selectedCourse} onClose={() => setSelectedCourse(null)} />}
     </section>
   );
 }
@@ -2378,6 +2637,27 @@ function formatFullDate(value) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function dateInputValue(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function attendanceStateLabel(slot) {
+  if (slot.signed) return "已签到";
+  if (slot.state === "expired") return "已结束";
+  if (slot.state === "upcoming") return "未开始";
+  if (slot.available) return "可签到";
+  return "等待管理员开放";
+}
+
+function attendanceAdminStateLabel(slot) {
+  if (slot.state === "expired") return "本时段已结束";
+  if (slot.state === "upcoming") return "未到生成时间";
+  return "当前可生成签到码";
 }
 
 function formatTime(time) {

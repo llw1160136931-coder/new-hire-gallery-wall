@@ -1,6 +1,19 @@
 from django.contrib import admin
 
-from .models import ChunkedUpload, Course, Like, Profile, Tag, TrainingCamp, Vote, Work, WorkImage, WorkReviewLog
+from .models import (
+    AttendanceRecord,
+    AttendanceSession,
+    ChunkedUpload,
+    Course,
+    Like,
+    Profile,
+    Tag,
+    TrainingCamp,
+    Vote,
+    Work,
+    WorkImage,
+    WorkReviewLog,
+)
 
 
 @admin.register(TrainingCamp)
@@ -28,6 +41,40 @@ class CourseAdmin(admin.ModelAdmin):
     list_display = ['camp', 'date', 'start_time', 'end_time', 'topic', 'title', 'teacher', 'room', 'status']
     list_filter = ['camp', 'date', 'status', 'topic']
     search_fields = ['title', 'topic', 'teacher', 'room', 'content']
+
+
+@admin.register(AttendanceSession)
+class AttendanceSessionAdmin(admin.ModelAdmin):
+    list_display = ['date', 'time_slot', 'camp', 'code', 'created_by', 'created_at']
+    list_filter = ['camp', 'date', 'time_slot']
+    search_fields = ['code', 'created_by__username', 'created_by__profile__name']
+    readonly_fields = ['camp', 'date', 'time_slot', 'code', 'created_by', 'created_at']
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(AttendanceRecord)
+class AttendanceRecordAdmin(admin.ModelAdmin):
+    list_display = ['session', 'student', 'signed_at']
+    list_filter = ['session__date', 'session__time_slot']
+    search_fields = ['student__username', 'student__profile__name']
+    readonly_fields = ['session', 'student', 'signed_at']
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(Work)

@@ -1,8 +1,10 @@
 import uuid
 import unicodedata
+from datetime import time
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.core.validators import RegexValidator
 from django.db import models
 from django.db.models import Q
 
@@ -150,6 +152,84 @@ class Course(models.Model):
 
     def __str__(self):
         return f'{self.date} {self.title}'
+
+
+class AttendanceSession(models.Model):
+    class TimeSlot(models.TextChoices):
+        MORNING = 'morning', '上午签到'
+        AFTERNOON = 'afternoon', '下午签到'
+        EVENING = 'evening', '晚间签到'
+
+    SLOT_WINDOWS = {
+        TimeSlot.MORNING: (time(8, 0), time(12, 0)),
+        TimeSlot.AFTERNOON: (time(12, 0), time(18, 0)),
+        TimeSlot.EVENING: (time(18, 0), time(21, 0)),
+    }
+
+    camp = models.ForeignKey(TrainingCamp, on_delete=models.PROTECT, related_name='attendance_sessions')
+    date = models.DateField()
+    time_slot = models.CharField(max_length=20, choices=TimeSlot.choices)
+    code = models.CharField(
+        max_length=5,
+        validators=[RegexValidator(r'^\d{5}$', '签到码必须是 5 位数字')],
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='created_attendance_sessions',
+        blank=True,
+        null=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date', 'time_slot']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['camp', 'date', 'time_slot'],
+                name='unique_attendance_session_slot',
+            ),
+            models.UniqueConstraint(
+                fields=['date', 'code'],
+                name='unique_attendance_code_per_date',
+            ),
+        ]
+
+    @classmethod
+    def slot_for_time(cls, value):
+        for slot, (starts_at, ends_at) in cls.SLOT_WINDOWS.items():
+            if starts_at <= value < ends_at:
+                return slot
+        return None
+
+    @classmethod
+    def window_for_slot(cls, slot):
+        return cls.SLOT_WINDOWS[slot]
+
+    def __str__(self):
+        return f'{self.date} {self.get_time_slot_display()}'
+
+
+class AttendanceRecord(models.Model):
+    session = models.ForeignKey(AttendanceSession, on_delete=models.CASCADE, related_name='records')
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='attendance_records',
+    )
+    signed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-signed_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['session', 'student'],
+                name='unique_student_attendance_record',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.session} - {self.student.username}'
 
 
 def normalize_tag_name(value):

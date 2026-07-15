@@ -1,6 +1,6 @@
 # 新员工展示墙系统
 
-一个 Vite + React + Django REST Framework 项目，用于新员工培训作品展示、课程安排、点赞投票与管理员审核。
+一个 Vite + React + Django REST Framework 项目，用于新员工培训作品展示、课程安排、分时段签到、点赞投票与管理员审核。
 
 ## 运行方式
 
@@ -39,7 +39,8 @@ npm run dev
 - 通过审核的作品展示在作品墙，支持点赞和投票。
 - 首页搜索作品/同学时，会请求 Django 后端搜索接口，不走前端本地过滤。
 - 首页课程表自动区分已结束、进行中、未开始。
-- 个人中心支持编辑姓名、头像、毕业院校、MBTI、星座和性别。
+- 学员可在三个固定时段使用 5 位签到码签到，管理员可生成签到码并查看已签到、未签到数据。
+- 个人中心支持编辑姓名、头像、工作单位、MBTI、星座和性别。
 
 当前版本的 React 前端已接入 Django API，登录使用限时 JWT access token，并在过期时尝试用 refresh token 自动续期。
 
@@ -103,6 +104,10 @@ POST /api/auth/token/refresh/
 GET    /api/camps/current/      # 当前激活培训期、日期、投稿/投票状态与票数配置
 GET    /api/tags/popular/       # 当前培训期已发布作品的热门标签及使用次数
 GET    /api/search/?q=关键词
+GET    /api/attendance/today/  # 学员查看本人今日签到状态，不返回签到码
+POST   /api/attendance/check-in/ # 学员提交当前时段的 5 位签到码
+GET    /api/attendance/admin/overview/?date=YYYY-MM-DD # 管理员查看签到码和签到数据
+POST   /api/attendance/admin/generate/ # 管理员为当前时段生成唯一签到码
 POST   /api/uploads/init/       # 初始化切片上传，限制最大 500MB
 POST   /api/uploads/{id}/chunk/ # 上传单个分片
 POST   /api/uploads/{id}/complete/ # 合并分片，返回 upload_id
@@ -114,6 +119,8 @@ POST   /api/works/{id}/approve/
 POST   /api/works/{id}/reject/
 PATCH  /api/me/                 # multipart，可上传 avatar 文件
 ```
+
+签到时段为 `08:00-12:00`、`12:00-18:00`、`18:00-21:00`，均采用左闭右开区间。时间、角色、签到码、重复签到和逾期限制全部由 Django 后端校验；每个培训期每天每个时段只能生成一个签到码。签到接口默认限制为每个账号每分钟 10 次请求。
 
 作品的 `tags` 字段最多接受 5 个标签，每个标签最多 20 个字符。发布和重新提交页面支持用逗号、顿号或换行分隔输入；标签会统一去除 `#`、空白并按大小写去重。热门标签完全来自当前培训期已审核发布的作品。
 

@@ -2011,6 +2011,319 @@ button {
   margin-bottom: 28px;
 }
 
+.courseScene {
+  display: grid;
+  gap: 22px;
+}
+
+.studentAttendancePanel {
+  border: 1px solid #ffd1d4;
+  border-radius: 32px;
+  padding: clamp(22px, 4vw, 34px);
+  background:
+    radial-gradient(circle at 88% 15%, rgba(255, 138, 0, 0.18), transparent 26%),
+    linear-gradient(135deg, #fff 0%, #fff3f3 100%);
+  box-shadow: var(--shadow);
+}
+
+.attendancePanelHead,
+.attendanceAdminHero,
+.attendanceRosterHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.attendancePanelHead span,
+.attendanceRosterHead > div > span {
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.attendancePanelHead h2 {
+  margin: 5px 0 6px;
+  font-size: clamp(27px, 4vw, 42px);
+}
+
+.attendancePanelHead p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.attendancePanelHead > strong {
+  border-radius: 18px;
+  padding: 14px 18px;
+  background: var(--ink);
+  color: #fff;
+  white-space: nowrap;
+}
+
+.attendanceSlotStrip,
+.attendanceAdminSlots {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.attendanceSlotStrip article {
+  border: 1px solid #eee8e2;
+  border-radius: 20px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.attendanceSlotStrip article.current {
+  border-color: var(--red);
+  box-shadow: inset 0 0 0 1px var(--red);
+}
+
+.attendanceSlotStrip span,
+.attendanceSlotStrip strong,
+.attendanceSlotStrip em {
+  display: block;
+}
+
+.attendanceSlotStrip span {
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.attendanceSlotStrip strong {
+  margin: 5px 0 10px;
+  font-size: 18px;
+}
+
+.attendanceSlotStrip em {
+  width: max-content;
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #f1eee7;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.attendanceSlotStrip .active em {
+  background: #fff0f0;
+  color: var(--red);
+}
+
+.attendanceSlotStrip .signed em {
+  background: #e7fff6;
+  color: #10835f;
+}
+
+.attendanceCheckInForm {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.attendanceCheckInForm label,
+.attendanceAdminControls label {
+  display: grid;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.attendanceCheckInForm input,
+.attendanceAdminControls input {
+  width: 100%;
+  border: 1px solid #ffd0d0;
+  border-radius: 16px;
+  padding: 14px 16px;
+  background: #fff;
+  outline: none;
+}
+
+.attendanceCheckInForm input {
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 0.18em;
+}
+
+.attendanceCheckInForm input:focus,
+.attendanceAdminControls input:focus {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px rgba(255, 31, 47, 0.1);
+}
+
+.attendanceCheckInForm button,
+.attendanceAdminControls button {
+  min-height: 54px;
+  border: 0;
+  border-radius: 17px;
+  padding: 0 22px;
+  background: linear-gradient(135deg, var(--red), #ff5b46);
+  color: #fff;
+  font-weight: 900;
+  box-shadow: 0 12px 24px rgba(255, 31, 47, 0.2);
+}
+
+.attendanceCheckInForm button:disabled,
+.attendanceAdminControls button:disabled {
+  cursor: not-allowed;
+  background: #dedbd5;
+  box-shadow: none;
+}
+
+.attendanceAdminScene {
+  overflow: hidden;
+}
+
+.attendanceAdminHero {
+  align-items: flex-end;
+}
+
+.attendanceAdminHero .panelTitle {
+  margin-bottom: 0;
+}
+
+.attendanceAdminControls {
+  min-width: 230px;
+  display: grid;
+  gap: 12px;
+}
+
+.attendanceMetrics {
+  margin-top: 26px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.attendanceMetrics > strong {
+  border: 1px solid #ffe0e0;
+  border-radius: 20px;
+  padding: 18px;
+  background: #fff;
+  color: var(--red);
+  font-size: 28px;
+}
+
+.attendanceMetrics span {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.attendanceAdminSlots button {
+  min-width: 0;
+  border: 1px solid #ece6df;
+  border-radius: 22px;
+  padding: 18px;
+  background: #fff;
+  color: var(--text);
+  text-align: left;
+}
+
+.attendanceAdminSlots button.selected {
+  border-color: var(--red);
+  box-shadow: inset 0 0 0 1px var(--red), 0 12px 24px rgba(255, 31, 47, 0.1);
+}
+
+.attendanceAdminSlots span,
+.attendanceAdminSlots strong,
+.attendanceAdminSlots small {
+  display: block;
+}
+
+.attendanceAdminSlots span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.attendanceAdminSlots strong {
+  margin: 12px 0;
+  color: var(--red);
+  font-size: clamp(25px, 4vw, 38px);
+  letter-spacing: 0.1em;
+}
+
+.attendanceAdminSlots small {
+  min-height: 34px;
+  line-height: 1.5;
+}
+
+.attendanceRoster {
+  margin-top: 24px;
+  border: 1px solid #ece6df;
+  border-radius: 24px;
+  padding: 22px;
+  background: #fff;
+}
+
+.attendanceRosterHead h3 {
+  margin: 5px 0 0;
+  font-size: 26px;
+}
+
+.attendanceRosterHead > div:last-child {
+  display: flex;
+  gap: 8px;
+}
+
+.attendanceRosterHead button {
+  border: 1px solid #e9e3dc;
+  border-radius: 999px;
+  padding: 9px 13px;
+  background: #fff;
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.attendanceRosterHead button.active {
+  border-color: var(--red);
+  background: var(--red);
+  color: #fff;
+}
+
+.attendanceRosterHead button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.attendanceTable {
+  margin-top: 18px;
+  border: 1px solid #f0ebe5;
+  border-radius: 18px;
+  overflow: hidden;
+}
+
+.attendanceTableRow {
+  min-height: 52px;
+  padding: 12px 16px;
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(140px, 1fr) minmax(150px, 1fr);
+  gap: 12px;
+  align-items: center;
+  border-top: 1px solid #f2eee9;
+}
+
+.attendanceTableRow:first-child {
+  border-top: 0;
+}
+
+.attendanceTableRow span {
+  color: var(--muted);
+}
+
+.attendanceTableHeader {
+  background: #fff7f7;
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .courseGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4531,5 +4844,98 @@ button:disabled {
 
   .profileWorkCard h4 {
     font-size: 14px;
+  }
+}
+
+@media (max-width: 680px) {
+  .studentAttendancePanel,
+  .attendanceAdminScene {
+    border-radius: 24px;
+    padding: 20px 16px;
+  }
+
+  .attendancePanelHead,
+  .attendanceAdminHero,
+  .attendanceRosterHead {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .attendancePanelHead > strong {
+    width: 100%;
+    white-space: normal;
+  }
+
+  .attendanceSlotStrip,
+  .attendanceAdminSlots {
+    grid-template-columns: 1fr;
+  }
+
+  .attendanceSlotStrip {
+    gap: 8px;
+  }
+
+  .attendanceSlotStrip article {
+    padding: 13px 14px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 10px;
+    align-items: center;
+  }
+
+  .attendanceSlotStrip strong {
+    margin: 0;
+    font-size: 15px;
+  }
+
+  .attendanceSlotStrip em {
+    grid-column: 1 / -1;
+  }
+
+  .attendanceCheckInForm {
+    grid-template-columns: 1fr;
+  }
+
+  .attendanceCheckInForm button {
+    width: 100%;
+  }
+
+  .attendanceAdminControls {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .attendanceMetrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .attendanceMetrics > strong {
+    padding: 12px 8px;
+    font-size: 21px;
+  }
+
+  .attendanceAdminSlots button {
+    padding: 15px;
+  }
+
+  .attendanceRoster {
+    padding: 16px 12px;
+  }
+
+  .attendanceRosterHead > div:last-child {
+    width: 100%;
+  }
+
+  .attendanceRosterHead button {
+    flex: 1;
+  }
+
+  .attendanceTable {
+    overflow-x: auto;
+  }
+
+  .attendanceTableRow {
+    min-width: 520px;
   }
 }

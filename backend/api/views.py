@@ -1,5 +1,6 @@
 import hashlib
 import re
+import secrets
 import shutil
 from datetime import timedelta
 from pathlib import Path
@@ -16,8 +17,20 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from .models import ChunkedUpload, Course, Like, Profile, Tag, TrainingCamp, Work, Vote, WorkReviewLog
-from .permissions import IsAdminRole
+from .models import (
+    AttendanceRecord,
+    AttendanceSession,
+    ChunkedUpload,
+    Course,
+    Like,
+    Profile,
+    Tag,
+    TrainingCamp,
+    Vote,
+    Work,
+    WorkReviewLog,
+)
+from .permissions import IsAdminRole, IsStudentRole
 from .serializers import (
     BulkReviewSerializer,
     CourseSerializer,
@@ -41,6 +54,24 @@ def active_camp():
 def window_is_open(starts_at, ends_at):
     now = timezone.now()
     return (not starts_at or starts_at <= now) and (not ends_at or now <= ends_at)
+
+
+def attendance_now():
+    return timezone.localtime()
+
+
+def attendance_window_label(slot):
+    starts_at, ends_at = AttendanceSession.window_for_slot(slot)
+    return f'{starts_at.strftime("%H:%M")}-{ends_at.strftime("%H:%M")}'
+
+
+def attendance_slot_state(selected_date, slot, now):
+    starts_at, ends_at = AttendanceSession.window_for_slot(slot)
+    if selected_date < now.date() or (selected_date == now.date() and now.time() >= ends_at):
+        return 'expired'
+    if selected_date > now.date() or (selected_date == now.date() and now.time() < starts_at):
+        return 'upcoming'
+    return 'active'
 
 
 class CurrentTrainingCampView(APIView):
@@ -88,6 +119,234 @@ class MeView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+
+class StudentAttendanceTodayView(APIView):
+    permission_classes = [IsStudentRole]
+
+    def get(self, request):
+        now = attendance_now()
+        camp = active_camp()
+        if not camp:
+            return Response({'detail': '当前没有激活的培训期'}, status=status.HTTP_404_NOT_FOUND)
+
+        sessions = {
+            item.time_slot: item
+            for item in AttendanceSession.objects.filter(camp=camp, date=now.date())
+        }
+        records = {
+            item.session_id: item
+            for item in AttendanceRecord.objects.filter(
+                student=request.user,
+                session__camp=camp,
+                session__date=now.date(),
+            )
+        }
+        slot_labels = dict(AttendanceSession.TimeSlot.choices)
+        current_slot = AttendanceSession.slot_for_time(now.time())
+        slots = []
+
+        for slot, _ in AttendanceSession.TimeSlot.choices:
+            session = sessions.get(slot)
+            record = records.get(session.id) if session else None
+            state = attendance_slot_state(now.date(), slot, now)
+            slots.append({
+                'slot': slot,
+                'label': slot_labels[slot],
+                'window': attendance_window_label(slot),
+                'state': 'signed' if record else state,
+                'available': bool(session and state == 'active' and not record),
+                'signed': bool(record),
+                'signed_at': record.signed_at if record else None,
+            })
+
+        return Response({
+            'date': now.date(),
+            'server_time': now,
+            'current_slot': current_slot,
+            'slots': slots,
+        })
+
+
+class StudentAttendanceCheckInView(APIView):
+    permission_classes = [IsStudentRole]
+    throttle_scope = 'attendance'
+
+    def post(self, request):
+        code = str(request.data.get('code', '')).strip()
+        if not re.fullmatch(r'\d{5}', code):
+            return Response({'code': '请输入 5 位数字签到码'}, status=status.HTTP_400_BAD_REQUEST)
+
+        now = attendance_now()
+        current_slot = AttendanceSession.slot_for_time(now.time())
+        if not current_slot:
+            return Response({'detail': '当前不在签到时间内，逾期不能补签'}, status=status.HTTP_400_BAD_REQUEST)
+
+        camp = active_camp()
+        if not camp:
+            return Response({'detail': '当前没有激活的培训期'}, status=status.HTTP_404_NOT_FOUND)
+
+        session = AttendanceSession.objects.filter(
+            camp=camp,
+            date=now.date(),
+            time_slot=current_slot,
+        ).first()
+        if not session:
+            return Response({'detail': '本时段签到码尚未生成'}, status=status.HTTP_400_BAD_REQUEST)
+        if not secrets.compare_digest(session.code, code):
+            return Response({'detail': '签到码不正确'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            with transaction.atomic():
+                record = AttendanceRecord.objects.create(session=session, student=request.user)
+        except IntegrityError:
+            return Response({'detail': '本时段已经签到，请勿重复提交'}, status=status.HTTP_409_CONFLICT)
+
+        return Response({
+            'detail': '签到成功',
+            'slot': session.time_slot,
+            'slot_label': session.get_time_slot_display(),
+            'signed_at': record.signed_at,
+        }, status=status.HTTP_201_CREATED)
+
+
+class AdminAttendanceOverviewView(APIView):
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        now = attendance_now()
+        selected_date = serializers.DateField().run_validation(request.query_params.get('date')) \
+            if request.query_params.get('date') else now.date()
+        camp = active_camp()
+        if not camp:
+            return Response({'detail': '当前没有激活的培训期'}, status=status.HTTP_404_NOT_FOUND)
+
+        students = list(
+            Profile.objects.filter(role=Profile.Role.STUDENT, user__is_active=True)
+            .select_related('user')
+            .order_by('name', 'user__username')
+        )
+        sessions = {
+            item.time_slot: item
+            for item in AttendanceSession.objects.filter(camp=camp, date=selected_date)
+            .select_related('created_by__profile')
+        }
+        slot_labels = dict(AttendanceSession.TimeSlot.choices)
+        slot_data = []
+
+        for slot, _ in AttendanceSession.TimeSlot.choices:
+            session = sessions.get(slot)
+            records = list(
+                AttendanceRecord.objects.filter(session=session)
+                .select_related('student__profile')
+                .order_by('signed_at')
+            ) if session else []
+            signed_ids = {record.student_id for record in records}
+            slot_data.append({
+                'session_id': session.id if session else None,
+                'slot': slot,
+                'label': slot_labels[slot],
+                'window': attendance_window_label(slot),
+                'state': attendance_slot_state(selected_date, slot, now),
+                'generated': bool(session),
+                'code': session.code if session else None,
+                'created_at': session.created_at if session else None,
+                'created_by': (
+                    session.created_by.profile.name
+                    if session and session.created_by and hasattr(session.created_by, 'profile')
+                    else session.created_by.username if session and session.created_by else ''
+                ),
+                'signed_count': len(records),
+                'absent_count': max(len(students) - len(records), 0) if session else None,
+                'records': [
+                    {
+                        'student_id': record.student_id,
+                        'username': record.student.username,
+                        'name': record.student.profile.name,
+                        'signed_at': record.signed_at,
+                    }
+                    for record in records
+                ],
+                'absent_students': [
+                    {'student_id': profile.user_id, 'username': profile.user.username, 'name': profile.name}
+                    for profile in students
+                    if profile.user_id not in signed_ids
+                ] if session else [],
+            })
+
+        return Response({
+            'date': selected_date,
+            'server_time': now,
+            'current_slot': AttendanceSession.slot_for_time(now.time()) if selected_date == now.date() else None,
+            'student_count': len(students),
+            'slots': slot_data,
+        })
+
+
+class AdminAttendanceGenerateView(APIView):
+    permission_classes = [IsAdminRole]
+    throttle_scope = 'attendance'
+
+    def post(self, request):
+        now = attendance_now()
+        current_slot = AttendanceSession.slot_for_time(now.time())
+        if not current_slot:
+            return Response(
+                {'detail': '当前不在签到时段内，不能提前生成或逾期生成签到码'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        camp = active_camp()
+        if not camp:
+            return Response({'detail': '当前没有激活的培训期'}, status=status.HTTP_404_NOT_FOUND)
+
+        existing = AttendanceSession.objects.filter(
+            camp=camp,
+            date=now.date(),
+            time_slot=current_slot,
+        ).first()
+        if existing:
+            return Response(
+                {'detail': '本时段签到码已由其他管理员生成，请刷新后查看'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        for _ in range(20):
+            code = f'{secrets.randbelow(100000):05d}'
+            try:
+                with transaction.atomic():
+                    session = AttendanceSession.objects.create(
+                        camp=camp,
+                        date=now.date(),
+                        time_slot=current_slot,
+                        code=code,
+                        created_by=request.user,
+                    )
+            except IntegrityError:
+                existing = AttendanceSession.objects.filter(
+                    camp=camp,
+                    date=now.date(),
+                    time_slot=current_slot,
+                ).first()
+                if existing:
+                    return Response(
+                        {'detail': '本时段签到码已由其他管理员生成，请刷新后查看'},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                continue
+
+            return Response({
+                'detail': '签到码生成成功',
+                'session_id': session.id,
+                'date': session.date,
+                'slot': session.time_slot,
+                'slot_label': session.get_time_slot_display(),
+                'window': attendance_window_label(session.time_slot),
+                'code': session.code,
+                'created_at': session.created_at,
+            }, status=status.HTTP_201_CREATED)
+
+        return Response({'detail': '签到码生成失败，请稍后重试'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
 
 class CourseViewSet(viewsets.ReadOnlyModelViewSet):
