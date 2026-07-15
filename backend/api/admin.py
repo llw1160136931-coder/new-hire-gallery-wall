@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from .models import (
+    AttendanceAttempt,
     AttendanceRecord,
     AttendanceSession,
     ChunkedUpload,
@@ -66,6 +67,23 @@ class AttendanceRecordAdmin(admin.ModelAdmin):
     list_filter = ['session__date', 'session__time_slot']
     search_fields = ['student__username', 'student__profile__name']
     readonly_fields = ['session', 'student', 'signed_at']
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(AttendanceAttempt)
+class AttendanceAttemptAdmin(admin.ModelAdmin):
+    list_display = ['session', 'student', 'failed_attempts', 'locked_at', 'updated_at']
+    list_filter = ['session__date', 'session__time_slot', 'locked_at']
+    search_fields = ['student__username', 'student__profile__name']
+    readonly_fields = ['session', 'student', 'failed_attempts', 'locked_at', 'updated_at']
 
     def has_add_permission(self, request):
         return False

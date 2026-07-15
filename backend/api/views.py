@@ -18,6 +18,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from .models import (
+    AttendanceAttempt,
     AttendanceRecord,
     AttendanceSession,
     ChunkedUpload,
@@ -45,6 +46,9 @@ from .serializers import (
     media_type_from_content_type,
     validate_file_signature,
 )
+
+
+MAX_ATTENDANCE_FAILED_ATTEMPTS = 5
 
 
 def active_camp():
@@ -174,8 +178,8 @@ class StudentAttendanceCheckInView(APIView):
 
     def post(self, request):
         code = str(request.data.get('code', '')).strip()
-        if not re.fullmatch(r'\d{5}', code):
-            return Response({'code': '请输入 5 位数字签到码'}, status=status.HTTP_400_BAD_REQUEST)
+        if not re.fullmatch(r'\d{4}', code):
+            return Response({'code': '请输入 4 位数字签到码'}, status=status.HTTP_400_BAD_REQUEST)
 
         now = attendance_now()
         current_slot = AttendanceSession.slot_for_time(now.time())
@@ -193,14 +197,44 @@ class StudentAttendanceCheckInView(APIView):
         ).first()
         if not session:
             return Response({'detail': '本时段签到码尚未生成'}, status=status.HTTP_400_BAD_REQUEST)
-        if not secrets.compare_digest(session.code, code):
-            return Response({'detail': '签到码不正确'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            with transaction.atomic():
-                record = AttendanceRecord.objects.create(session=session, student=request.user)
-        except IntegrityError:
-            return Response({'detail': '本时段已经签到，请勿重复提交'}, status=status.HTTP_409_CONFLICT)
+        with transaction.atomic():
+            request.user.__class__.objects.select_for_update().get(pk=request.user.pk)
+            if AttendanceRecord.objects.filter(session=session, student=request.user).exists():
+                return Response({'detail': '本时段已经签到，请勿重复提交'}, status=status.HTTP_409_CONFLICT)
+
+            attempt, _ = AttendanceAttempt.objects.select_for_update().get_or_create(
+                session=session,
+                student=request.user,
+            )
+            if attempt.failed_attempts >= MAX_ATTENDANCE_FAILED_ATTEMPTS:
+                return Response(
+                    {'detail': '签到码输错次数过多，本时段已锁定'},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
+
+            if not secrets.compare_digest(session.code, code):
+                attempt.failed_attempts += 1
+                remaining_attempts = MAX_ATTENDANCE_FAILED_ATTEMPTS - attempt.failed_attempts
+                if remaining_attempts <= 0:
+                    attempt.locked_at = now
+                attempt.save(update_fields=['failed_attempts', 'locked_at', 'updated_at'])
+                if remaining_attempts <= 0:
+                    return Response(
+                        {'detail': '签到码输错次数过多，本时段已锁定'},
+                        status=status.HTTP_429_TOO_MANY_REQUESTS,
+                    )
+                return Response(
+                    {'detail': f'签到码不正确，还可尝试 {remaining_attempts} 次'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            try:
+                with transaction.atomic():
+                    record = AttendanceRecord.objects.create(session=session, student=request.user)
+            except IntegrityError:
+                return Response({'detail': '本时段已经签到，请勿重复提交'}, status=status.HTTP_409_CONFLICT)
+            attempt.delete()
 
         return Response({
             'detail': '签到成功',
@@ -312,7 +346,7 @@ class AdminAttendanceGenerateView(APIView):
             )
 
         for _ in range(20):
-            code = f'{secrets.randbelow(100000):05d}'
+            code = f'{secrets.randbelow(10000):04d}'
             try:
                 with transaction.atomic():
                     session = AttendanceSession.objects.create(

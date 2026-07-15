@@ -6,7 +6,7 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .models import AttendanceRecord, AttendanceSession, Profile, TrainingCamp
+from .models import AttendanceAttempt, AttendanceRecord, AttendanceSession, Profile, TrainingCamp
 
 
 class AttendanceApiTests(TestCase):
@@ -37,7 +37,7 @@ class AttendanceApiTests(TestCase):
             timezone.get_current_timezone(),
         )
 
-    def generate_morning_session(self, code='12345'):
+    def generate_morning_session(self, code='1234'):
         return AttendanceSession.objects.create(
             camp=self.camp,
             date=self.local_datetime(9).date(),
@@ -61,7 +61,7 @@ class AttendanceApiTests(TestCase):
         created_response = self.client.post('/api/attendance/admin/generate/', {}, format='json')
 
         self.assertEqual(created_response.status_code, 201)
-        self.assertRegex(created_response.data['code'], r'^\d{5}$')
+        self.assertRegex(created_response.data['code'], r'^\d{4}$')
         self.assertEqual(AttendanceSession.objects.count(), 1)
 
         self.client.force_authenticate(self.other_admin)
@@ -77,7 +77,7 @@ class AttendanceApiTests(TestCase):
     @patch('api.views.attendance_now')
     def test_student_payload_never_exposes_attendance_code(self, mocked_now):
         mocked_now.return_value = self.local_datetime(9)
-        self.generate_morning_session('54321')
+        self.generate_morning_session('5432')
         self.client.force_authenticate(self.student)
 
         response = self.client.get('/api/attendance/today/')
@@ -93,11 +93,11 @@ class AttendanceApiTests(TestCase):
     @patch('api.views.attendance_now')
     def test_student_can_sign_once_with_current_code(self, mocked_now):
         mocked_now.return_value = self.local_datetime(9, 30)
-        session = self.generate_morning_session('12345')
+        session = self.generate_morning_session('1234')
         self.client.force_authenticate(self.student)
 
-        first_response = self.client.post('/api/attendance/check-in/', {'code': '12345'}, format='json')
-        second_response = self.client.post('/api/attendance/check-in/', {'code': '12345'}, format='json')
+        first_response = self.client.post('/api/attendance/check-in/', {'code': '1234'}, format='json')
+        second_response = self.client.post('/api/attendance/check-in/', {'code': '1234'}, format='json')
 
         self.assertEqual(first_response.status_code, 201)
         self.assertEqual(second_response.status_code, 409)
@@ -106,20 +106,50 @@ class AttendanceApiTests(TestCase):
     @patch('api.views.attendance_now')
     def test_wrong_code_is_rejected(self, mocked_now):
         mocked_now.return_value = self.local_datetime(9)
-        self.generate_morning_session('12345')
+        self.generate_morning_session('1234')
         self.client.force_authenticate(self.student)
 
-        response = self.client.post('/api/attendance/check-in/', {'code': '99999'}, format='json')
+        response = self.client.post('/api/attendance/check-in/', {'code': '9999'}, format='json')
 
         self.assertEqual(response.status_code, 400)
         self.assertFalse(AttendanceRecord.objects.filter(student=self.student).exists())
 
     @patch('api.views.attendance_now')
+    def test_five_digit_code_is_rejected(self, mocked_now):
+        mocked_now.return_value = self.local_datetime(9)
+        self.generate_morning_session('1234')
+        self.client.force_authenticate(self.student)
+
+        response = self.client.post('/api/attendance/check-in/', {'code': '12345'}, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(AttendanceAttempt.objects.filter(student=self.student).exists())
+
+    @patch('api.views.attendance_now')
+    def test_student_is_locked_after_five_wrong_codes(self, mocked_now):
+        mocked_now.return_value = self.local_datetime(9)
+        session = self.generate_morning_session('1234')
+        self.client.force_authenticate(self.student)
+
+        responses = [
+            self.client.post('/api/attendance/check-in/', {'code': '9999'}, format='json')
+            for _ in range(5)
+        ]
+        correct_response = self.client.post('/api/attendance/check-in/', {'code': '1234'}, format='json')
+
+        self.assertEqual([response.status_code for response in responses], [400, 400, 400, 400, 429])
+        self.assertEqual(correct_response.status_code, 429)
+        attempt = AttendanceAttempt.objects.get(session=session, student=self.student)
+        self.assertEqual(attempt.failed_attempts, 5)
+        self.assertIsNotNone(attempt.locked_at)
+        self.assertFalse(AttendanceRecord.objects.filter(session=session, student=self.student).exists())
+
+    @patch('api.views.attendance_now')
     def test_expired_session_cannot_be_signed_or_generated(self, mocked_now):
-        self.generate_morning_session('12345')
+        self.generate_morning_session('1234')
         mocked_now.return_value = self.local_datetime(21)
         self.client.force_authenticate(self.student)
-        sign_response = self.client.post('/api/attendance/check-in/', {'code': '12345'}, format='json')
+        sign_response = self.client.post('/api/attendance/check-in/', {'code': '1234'}, format='json')
 
         self.client.force_authenticate(self.admin)
         generate_response = self.client.post('/api/attendance/admin/generate/', {}, format='json')
@@ -131,7 +161,7 @@ class AttendanceApiTests(TestCase):
     @patch('api.views.attendance_now')
     def test_admin_overview_contains_signed_and_absent_students(self, mocked_now):
         mocked_now.return_value = self.local_datetime(10)
-        session = self.generate_morning_session('12345')
+        session = self.generate_morning_session('1234')
         AttendanceRecord.objects.create(session=session, student=self.student)
         self.client.force_authenticate(self.admin)
 
@@ -152,7 +182,7 @@ class AttendanceApiTests(TestCase):
 
         self.client.force_authenticate(self.admin)
         student_today = self.client.get('/api/attendance/today/')
-        student_sign = self.client.post('/api/attendance/check-in/', {'code': '12345'}, format='json')
+        student_sign = self.client.post('/api/attendance/check-in/', {'code': '1234'}, format='json')
 
         self.assertEqual(admin_overview.status_code, 403)
         self.assertEqual(admin_generate.status_code, 403)

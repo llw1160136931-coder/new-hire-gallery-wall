@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, clearTokens, getStoredTokens, login } from "./api";
 import mascotFireReady from "./assets/mascot-fire-ready.png";
 import mascotFireShare from "./assets/mascot-fire-share.png";
@@ -9,6 +9,13 @@ import mascotUiMain from "./assets/mascot-ui-main-cut.png";
 import mascotUiSearch from "./assets/mascot-ui-search-cut.png";
 import mascotUiSuccess from "./assets/mascot-ui-success-cut.png";
 import mascotUiUpload from "./assets/mascot-ui-upload-cut.png";
+import {
+  guessContentType,
+  MAX_WORK_IMAGE_COUNT,
+  MAX_WORK_UPLOAD_BYTES,
+  mergeSelectedWorkFiles,
+  WORK_FILE_ACCEPT,
+} from "./workFileSelection";
 
 const studentTabs = [
   { id: "feed", label: "灵感", icon: "✦" },
@@ -57,10 +64,7 @@ const zodiacOptions = [
 ];
 
 const fallbackTones = ["blue", "violet", "orange"];
-const MAX_WORK_UPLOAD_BYTES = 500 * 1024 * 1024;
 const CHUNK_SIZE = 5 * 1024 * 1024;
-const MAX_WORK_IMAGE_COUNT = 10;
-const WORK_FILE_ACCEPT = "image/*,.pdf,application/pdf,video/mp4,video/webm,video/quicktime";
 const WELCOME_SEEN_KEY = "newHireGallery.welcomeSeen";
 const REVIEW_REJECT_TEMPLATES = [
   "作品介绍不够完整，请补充背景、亮点和创作过程。",
@@ -1132,10 +1136,185 @@ function WorkCard({ work, index, onLike, onOpen, onVote }) {
   );
 }
 
+function WorkImageCarousel({ images, title, onOpen }) {
+  const carouselRef = useRef(null);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const imageSetKey = images.join("|");
+
+  useEffect(() => {
+    setActiveIndex(0);
+    if (carouselRef.current) {
+      carouselRef.current.scrollLeft = 0;
+    }
+  }, [imageSetKey]);
+
+  function updateActiveIndex(event) {
+    const { clientWidth, scrollLeft } = event.currentTarget;
+    if (!clientWidth) return;
+    const nextIndex = Math.min(images.length - 1, Math.max(0, Math.round(scrollLeft / clientWidth)));
+    setActiveIndex(nextIndex);
+  }
+
+  function showImage(index) {
+    const carousel = carouselRef.current;
+    if (!carousel) return;
+    carousel.scrollTo({ left: carousel.clientWidth * index, behavior: "smooth" });
+    setActiveIndex(index);
+  }
+
+  return (
+    <div className="workDetailCarouselShell">
+      <div className="workDetailCarousel" onScroll={updateActiveIndex} ref={carouselRef}>
+        {images.map((src, index) => (
+          <button
+            className="workDetailSlide"
+            key={`${src}-${index}`}
+            onClick={() => onOpen(index)}
+            type="button"
+            aria-label={`查看第 ${index + 1} 张大图`}
+          >
+            <img src={src} alt={`${title} ${index + 1}`} />
+            <span className="workDetailZoomHint">点击查看大图</span>
+          </button>
+        ))}
+      </div>
+      {images.length > 1 && (
+        <>
+          <span className="workDetailImageCount">{activeIndex + 1}/{images.length}</span>
+          <button
+            className="workDetailCarouselArrow previous"
+            disabled={activeIndex === 0}
+            onClick={() => showImage(activeIndex - 1)}
+            type="button"
+            aria-label="上一张图片"
+          >
+            ‹
+          </button>
+          <button
+            className="workDetailCarouselArrow next"
+            disabled={activeIndex === images.length - 1}
+            onClick={() => showImage(activeIndex + 1)}
+            type="button"
+            aria-label="下一张图片"
+          >
+            ›
+          </button>
+          <div className="workDetailDots" aria-label={`当前第 ${activeIndex + 1} 张，共 ${images.length} 张`}>
+            {images.map((_, index) => (
+              <button
+                className={index === activeIndex ? "active" : ""}
+                key={index}
+                onClick={() => showImage(index)}
+                type="button"
+                aria-label={`查看第 ${index + 1} 张图片`}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function WorkImageLightbox({ images, title, initialIndex, onClose }) {
+  const carouselRef = useRef(null);
+  const [activeIndex, setActiveIndex] = useState(initialIndex);
+
+  useEffect(() => {
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousPageOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    document.body.classList.add("workImageLightboxOpen");
+
+    const frame = window.requestAnimationFrame(() => {
+      const carousel = carouselRef.current;
+      if (carousel) {
+        carousel.scrollLeft = carousel.clientWidth * initialIndex;
+      }
+    });
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousPageOverflow;
+      document.body.classList.remove("workImageLightboxOpen");
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [initialIndex, onClose]);
+
+  function updateActiveIndex(event) {
+    const { clientWidth, scrollLeft } = event.currentTarget;
+    if (!clientWidth) return;
+    setActiveIndex(Math.min(images.length - 1, Math.max(0, Math.round(scrollLeft / clientWidth))));
+  }
+
+  function showImage(index) {
+    const carousel = carouselRef.current;
+    if (!carousel) return;
+    carousel.scrollTo({ left: carousel.clientWidth * index, behavior: "smooth" });
+    setActiveIndex(index);
+  }
+
+  return (
+    <div className="workImageLightbox" role="dialog" aria-modal="true" aria-label={`${title} 图片预览`}>
+      <button className="workImageLightboxClose" onClick={onClose} type="button" aria-label="关闭大图">×</button>
+      <div className="workImageLightboxCarousel" onScroll={updateActiveIndex} ref={carouselRef}>
+        {images.map((src, index) => (
+          <div className="workImageLightboxFrame" key={`${src}-large-${index}`}>
+            <img src={src} alt={`${title} 大图 ${index + 1}`} />
+          </div>
+        ))}
+      </div>
+      {images.length > 1 && (
+        <>
+          <button
+            className="workImageLightboxArrow previous"
+            disabled={activeIndex === 0}
+            onClick={() => showImage(activeIndex - 1)}
+            type="button"
+            aria-label="上一张图片"
+          >
+            ‹
+          </button>
+          <button
+            className="workImageLightboxArrow next"
+            disabled={activeIndex === images.length - 1}
+            onClick={() => showImage(activeIndex + 1)}
+            type="button"
+            aria-label="下一张图片"
+          >
+            ›
+          </button>
+        </>
+      )}
+      <span className="workImageLightboxCount">{activeIndex + 1}/{images.length}</span>
+      <small className="workImageLightboxHint">左右滑动切换图片，双指可缩放查看</small>
+    </div>
+  );
+}
+
 function WorkDetailPage({ work, onBack, onLike, onVote, actionMessage, actionError }) {
-  const images = getWorkImages(work);
-  const image = images[0] || getWorkImage(work);
+  const galleryImages = getWorkImages(work);
+  const fallbackImage = getWorkImage(work);
+  const images = galleryImages.length > 0 ? galleryImages : (fallbackImage ? [fallbackImage] : []);
   const attachment = work.attachment;
+  const isVideo = work.media_type === "video" && attachment;
+  const isPdf = work.media_type === "pdf" && attachment;
+  const showGeneratedCover = !isVideo && images.length === 0 && !isPdf;
+  const hasVisualMedia = Boolean(isVideo || images.length > 0 || showGeneratedCover);
+  const [lightboxIndex, setLightboxIndex] = useState(null);
+
+  useEffect(() => {
+    setLightboxIndex(null);
+  }, [work.id]);
 
   return (
     <section className="workDetailPage">
@@ -1145,25 +1324,21 @@ function WorkDetailPage({ work, onBack, onLike, onVote, actionMessage, actionErr
       </div>
       {actionError && <p className="errorText interactionNotice">{actionError}</p>}
       {actionMessage && <p className="successText interactionNotice">{actionMessage}</p>}
-      <article className="workDetailCard">
-        <div className="workDetailMedia">
-          {work.media_type === "video" && attachment ? (
-            <video controls src={attachment} />
-          ) : images.length > 0 ? (
-            <div className={`workDetailGallery count${Math.min(images.length, 4)}`}>
-              {images.map((src, index) => (
-                <img src={src} alt={`${work.title} ${index + 1}`} key={`${src}-${index}`} />
-              ))}
-            </div>
-          ) : image ? (
-            <img src={image} alt={work.title} />
-          ) : (
-            <div className={`workDetailGenerated ${fallbackTones[work.id % fallbackTones.length]}`}>
-              <span>{mediaTypeLabel(work)}</span>
-              <strong>{work.title}</strong>
-            </div>
-          )}
-        </div>
+      <article className={`workDetailCard ${hasVisualMedia ? "" : "withoutVisual"}`}>
+        {hasVisualMedia && (
+          <div className="workDetailMedia">
+            {isVideo ? (
+              <video controls playsInline src={attachment} />
+            ) : images.length > 0 ? (
+              <WorkImageCarousel images={images} title={work.title} onOpen={setLightboxIndex} />
+            ) : (
+              <div className={`workDetailGenerated ${fallbackTones[work.id % fallbackTones.length]}`}>
+                <span>{mediaTypeLabel(work)}</span>
+                <strong>{work.title}</strong>
+              </div>
+            )}
+          </div>
+        )}
         <div className="workDetailBody">
           <div className="tagLine">
             <span>{workTypeLabel(work)}</span>
@@ -1181,13 +1356,23 @@ function WorkDetailPage({ work, onBack, onLike, onVote, actionMessage, actionErr
             <h3>作品介绍</h3>
             <p>{work.description}</p>
           </section>
+          {isPdf && (
+            <a className="workAttachmentCard" href={attachment} rel="noreferrer" target="_blank">
+              <span className="workAttachmentIcon">PDF</span>
+              <span className="workAttachmentInfo">
+                <strong>{work.original_filename || `${work.title}.pdf`}</strong>
+                <small>{work.file_size ? `${formatFileSize(work.file_size)} · ` : ""}点击查看附件</small>
+              </span>
+              <em>打开 ›</em>
+            </a>
+          )}
           <div className="workDetailLinks">
             {work.link && (
               <a href={work.link} rel="noreferrer" target="_blank">
                 打开作品链接
               </a>
             )}
-            {attachment && (
+            {attachment && !isPdf && (
               <a href={attachment} rel="noreferrer" target="_blank">
                 打开{mediaTypeLabel(work)}
               </a>
@@ -1199,6 +1384,14 @@ function WorkDetailPage({ work, onBack, onLike, onVote, actionMessage, actionErr
           </div>
         </div>
       </article>
+      {lightboxIndex !== null && (
+        <WorkImageLightbox
+          images={images}
+          initialIndex={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          title={work.title}
+        />
+      )}
     </section>
   );
 }
@@ -1302,7 +1495,7 @@ function StudentAttendancePanel() {
   }
 
   const currentSlot = attendance?.slots?.find((slot) => slot.slot === attendance.current_slot);
-  const canSubmit = Boolean(currentSlot?.available && code.length === 5 && !submitting);
+  const canSubmit = Boolean(currentSlot?.available && code.length === 4 && !submitting);
 
   return (
     <section className="studentAttendancePanel">
@@ -1310,7 +1503,7 @@ function StudentAttendancePanel() {
         <div>
           <span>今日签到</span>
           <h2>{attendance?.date || "正在读取服务器时间"}</h2>
-          <p>签到时间和结果以后端服务器为准，逾期不能补签。</p>
+          <p>请在规定时间内完成签到，逾期不能补签。</p>
         </div>
         <strong>{currentSlot ? `${currentSlot.label} · ${currentSlot.window}` : "当前不在签到时段"}</strong>
       </div>
@@ -1331,16 +1524,16 @@ function StudentAttendancePanel() {
 
           <form className="attendanceCheckInForm" onSubmit={submitAttendance}>
             <label>
-              输入管理员公布的 5 位签到码
+              输入管理员公布的 4 位签到码
               <input
-                aria-label="5 位签到码"
+                aria-label="4 位签到码"
                 autoComplete="one-time-code"
                 disabled={!currentSlot?.available || currentSlot?.signed}
                 inputMode="numeric"
-                maxLength="5"
-                onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 5))}
-                pattern="\d{5}"
-                placeholder="请输入 5 位数字"
+                maxLength="4"
+                onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 4))}
+                pattern="\d{4}"
+                placeholder="请输入 4 位数字"
                 value={code}
               />
             </label>
@@ -1560,6 +1753,91 @@ function AdminAttendanceView() {
   );
 }
 
+function WorkFilePicker({ asset, images, inputKey, onRemoveAsset, onRemoveImage, onSelect }) {
+  const [previews, setPreviews] = useState([]);
+
+  useEffect(() => {
+    const nextPreviews = images.map((file) => ({ file, url: URL.createObjectURL(file) }));
+    setPreviews(nextPreviews);
+    return () => nextPreviews.forEach((preview) => URL.revokeObjectURL(preview.url));
+  }, [images]);
+
+  function selectFiles(event) {
+    onSelect(event.target.files);
+    event.target.value = "";
+  }
+
+  const pickerInput = (accept, label, multiple = false) => (
+    <input
+      accept={accept}
+      aria-label={label}
+      key={inputKey}
+      multiple={multiple}
+      onChange={selectFiles}
+      type="file"
+    />
+  );
+
+  return (
+    <div className="workFilePicker">
+      {previews.length > 0 ? (
+        <>
+          <div className="workImageSelectionGrid">
+            {previews.map(({ file, url }, index) => (
+              <article className="workImageSelectionItem" key={`${file.name}-${file.size}-${file.lastModified}-${index}`}>
+                <img src={url} alt={`待上传图片 ${index + 1}：${file.name}`} />
+                <span>{index + 1}</span>
+                <button
+                  aria-label={`删除第 ${index + 1} 张图片：${file.name}`}
+                  onClick={() => onRemoveImage(index)}
+                  type="button"
+                >
+                  ×
+                </button>
+                <small title={file.name}>{file.name}</small>
+              </article>
+            ))}
+            {images.length < MAX_WORK_IMAGE_COUNT && (
+              <label className="workImageAddTile">
+                {pickerInput("image/*", "继续添加图片", true)}
+                <strong>＋</strong>
+                <span>继续添加</span>
+              </label>
+            )}
+          </div>
+          <div className="workImageSelectionSummary">
+            <strong>已选择 {images.length} 张图片</strong>
+            <span>还可以添加 {MAX_WORK_IMAGE_COUNT - images.length} 张，发布后按当前顺序展示</span>
+          </div>
+        </>
+      ) : asset ? (
+        <div className="workAssetSelection">
+          <span>{asset.type === "application/pdf" || asset.name.toLowerCase().endsWith(".pdf") ? "PDF" : "视频"}</span>
+          <div>
+            <strong>{asset.name}</strong>
+            <small>{formatFileSize(asset.size)} · 已选择</small>
+          </div>
+          <button onClick={onRemoveAsset} type="button">移除</button>
+        </div>
+      ) : (
+        <label className="workFileEmptyPicker">
+          {pickerInput(WORK_FILE_ACCEPT, "选择作品图片或附件", true)}
+          <strong>＋</strong>
+          <span>添加图片或附件</span>
+          <small>图片可以分多次继续添加</small>
+        </label>
+      )}
+      {asset && (
+        <label className="workAssetReplace">
+          {pickerInput(WORK_FILE_ACCEPT, "更换作品附件")}
+          更换文件
+        </label>
+      )}
+      <small className="workFilePickerHelp">图片最多 10 张；PDF、MP4、WebM、MOV 只能上传 1 个，单个文件最大 500MB。</small>
+    </div>
+  );
+}
+
 function PublishView({ camp }) {
   const initialForm = { title: "", work_type: "ai", tags: "", link: "", asset: null, images: [], description: "" };
   const [form, setForm] = useState(initialForm);
@@ -1598,16 +1876,24 @@ function PublishView({ camp }) {
   }
 
   function updateFiles(fileList) {
-    const nextFiles = normalizeSelectedWorkFiles(fileList);
+    const nextFiles = mergeSelectedWorkFiles(form, fileList);
     if (nextFiles.error) {
       setError(nextFiles.error);
-      updateField("asset", null);
-      updateField("images", []);
       return;
     }
 
     setError("");
     setForm((current) => ({ ...current, asset: nextFiles.asset, images: nextFiles.images }));
+  }
+
+  function removeImage(index) {
+    setError("");
+    setForm((current) => ({ ...current, images: current.images.filter((_, itemIndex) => itemIndex !== index) }));
+  }
+
+  function removeAsset() {
+    setError("");
+    updateField("asset", null);
   }
 
   return (
@@ -1656,20 +1942,20 @@ function PublishView({ camp }) {
             value={form.link}
           />
         </label>
-        <label>
-          上传文件
-          <input
-            accept={WORK_FILE_ACCEPT}
-            key={fileInputKey}
-            multiple
-            onChange={(event) => updateFiles(event.target.files)}
-            type="file"
+        <div className="publishFileField">
+          <div className="publishFieldLabel">
+            <strong>上传文件</strong>
+            <span>{form.images.length > 0 ? `${form.images.length}/${MAX_WORK_IMAGE_COUNT}` : "图片 / PDF / 视频"}</span>
+          </div>
+          <WorkFilePicker
+            asset={form.asset}
+            images={form.images}
+            inputKey={fileInputKey}
+            onRemoveAsset={removeAsset}
+            onRemoveImage={removeImage}
+            onSelect={updateFiles}
           />
-          <small>图片最多 10 张；PDF、MP4、WebM、MOV 一次上传 1 个，最大 500MB。</small>
-          {form.images.length > 0 && <small className="fileSummary">已选择 {form.images.length} 张图片</small>}
-          {form.asset && <small className="fileSummary">已选择文件：{form.asset.name}</small>}
-          <small>支持图片、PDF、MP4、WebM、MOV，最大 500MB，提交时自动切片上传。</small>
-        </label>
+        </div>
         <label>
           作品介绍
           <textarea
@@ -2221,16 +2507,24 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
   }
 
   function updateWorkFiles(fileList) {
-    const nextFiles = normalizeSelectedWorkFiles(fileList);
+    const nextFiles = mergeSelectedWorkFiles(workDraft, fileList);
     if (nextFiles.error) {
       setError(nextFiles.error);
-      updateWorkDraft("asset", null);
-      updateWorkDraft("images", []);
       return;
     }
 
     setError("");
     setWorkDraft((current) => ({ ...current, asset: nextFiles.asset, images: nextFiles.images }));
+  }
+
+  function removeWorkImage(index) {
+    setError("");
+    setWorkDraft((current) => ({ ...current, images: current.images.filter((_, itemIndex) => itemIndex !== index) }));
+  }
+
+  function removeWorkAsset() {
+    setError("");
+    updateWorkDraft("asset", null);
   }
 
   const heat = myWorks.reduce((sum, work) => sum + scoreWork(work), 0);
@@ -2448,20 +2742,20 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
                 作品链接
                 <input type="url" value={workDraft.link} onChange={(event) => updateWorkDraft("link", event.target.value)} />
               </label>
-              <label>
-                重新上传文件
-                <input
-                  accept={WORK_FILE_ACCEPT}
-                  key={workFileInputKey}
-                  multiple
-                  onChange={(event) => updateWorkFiles(event.target.files)}
-                  type="file"
+              <div className="publishFileField">
+                <div className="publishFieldLabel">
+                  <strong>重新上传文件</strong>
+                  <span>{workDraft.images.length > 0 ? `${workDraft.images.length}/${MAX_WORK_IMAGE_COUNT}` : "图片 / PDF / 视频"}</span>
+                </div>
+                <WorkFilePicker
+                  asset={workDraft.asset}
+                  images={workDraft.images}
+                  inputKey={workFileInputKey}
+                  onRemoveAsset={removeWorkAsset}
+                  onRemoveImage={removeWorkImage}
+                  onSelect={updateWorkFiles}
                 />
-                <small>图片最多 10 张；PDF、MP4、WebM、MOV 一次上传 1 个，最大 500MB。</small>
-                {workDraft.images.length > 0 && <small className="fileSummary">已选择 {workDraft.images.length} 张图片</small>}
-                {workDraft.asset && <small className="fileSummary">已选择文件：{workDraft.asset.name}</small>}
-                <small>支持图片、PDF、MP4、WebM、MOV，最大 500MB。</small>
-              </label>
+              </div>
               <label>
                 作品介绍
                 <textarea
@@ -2774,52 +3068,6 @@ async function uploadWorkAsset(file, onProgress) {
 
   const completed = await api.completeUpload(upload.upload_id);
   return completed.upload_id;
-}
-
-function guessContentType(fileName) {
-  const lower = fileName.toLowerCase();
-  if (lower.endsWith(".pdf")) return "application/pdf";
-  if (lower.endsWith(".mp4")) return "video/mp4";
-  if (lower.endsWith(".webm")) return "video/webm";
-  if (lower.endsWith(".mov")) return "video/quicktime";
-  if (lower.endsWith(".png")) return "image/png";
-  if (lower.endsWith(".gif")) return "image/gif";
-  if (lower.endsWith(".webp")) return "image/webp";
-  return "image/jpeg";
-}
-
-function isImageFile(file) {
-  const contentType = file.type || guessContentType(file.name);
-  return contentType.startsWith("image/");
-}
-
-function normalizeSelectedWorkFiles(fileList) {
-  const files = Array.from(fileList ?? []);
-  if (files.length === 0) {
-    return { asset: null, images: [] };
-  }
-
-  const imageFiles = files.filter(isImageFile);
-  const otherFiles = files.filter((file) => !isImageFile(file));
-
-  if (imageFiles.length > 0 && otherFiles.length > 0) {
-    return { error: "图片作品请只选择图片；PDF/视频请单独上传。" };
-  }
-
-  if (imageFiles.length > MAX_WORK_IMAGE_COUNT) {
-    return { error: `最多只能上传 ${MAX_WORK_IMAGE_COUNT} 张图片。` };
-  }
-
-  if (otherFiles.length > 1) {
-    return { error: "PDF 或视频一次只能上传 1 个文件。" };
-  }
-
-  const oversizedFile = files.find((file) => file.size > MAX_WORK_UPLOAD_BYTES);
-  if (oversizedFile) {
-    return { error: `${oversizedFile.name} 超过 500MB。` };
-  }
-
-  return { asset: otherFiles[0] ?? null, images: imageFiles };
 }
 
 function buildWorkFormData(work, uploadId = null) {

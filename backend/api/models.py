@@ -170,8 +170,8 @@ class AttendanceSession(models.Model):
     date = models.DateField()
     time_slot = models.CharField(max_length=20, choices=TimeSlot.choices)
     code = models.CharField(
-        max_length=5,
-        validators=[RegexValidator(r'^\d{5}$', '签到码必须是 5 位数字')],
+        max_length=4,
+        validators=[RegexValidator(r'^\d{4}$', '签到码必须是 4 位数字')],
     )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -230,6 +230,29 @@ class AttendanceRecord(models.Model):
 
     def __str__(self):
         return f'{self.session} - {self.student.username}'
+
+
+class AttendanceAttempt(models.Model):
+    session = models.ForeignKey(AttendanceSession, on_delete=models.CASCADE, related_name='attempts')
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='attendance_attempts',
+    )
+    failed_attempts = models.PositiveSmallIntegerField(default=0)
+    locked_at = models.DateTimeField(blank=True, null=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['session', 'student'],
+                name='unique_student_attendance_attempt',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.session} - {self.student.username} ({self.failed_attempts})'
 
 
 def normalize_tag_name(value):
