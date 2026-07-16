@@ -4,6 +4,7 @@ import tempfile
 from datetime import timedelta
 
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.utils import timezone
@@ -23,6 +24,7 @@ class WorkApiTests(TestCase):
         shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
 
     def setUp(self):
+        cache.clear()
         self.client = APIClient()
         self.camp = TrainingCamp.get_active()
         self.camp.name = 'Test camp'

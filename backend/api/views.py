@@ -4,14 +4,18 @@ import secrets
 import shutil
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import quote
 
 from django.conf import settings
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.files import File
 from django.db import IntegrityError, transaction
 from django.db.models import Count, F, Q, Sum
+from django.http import FileResponse, Http404, HttpResponse
 from django.utils import timezone
+from django.utils.http import content_disposition_header
 from django.utils.text import get_valid_filename
-from rest_framework import parsers, permissions, serializers, status, viewsets
+from rest_framework import mixins, parsers, permissions, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -23,6 +27,7 @@ from .models import (
     AttendanceSession,
     ChunkedUpload,
     Course,
+    CourseResource,
     Like,
     Profile,
     Tag,
@@ -30,6 +35,12 @@ from .models import (
     Vote,
     Work,
     WorkReviewLog,
+)
+from .course_files import (
+    course_mind_map_content_type,
+    course_resource_content_type,
+    validate_course_mind_map_file,
+    validate_course_resource_file,
 )
 from .permissions import IsAdminRole, IsStudentRole
 from .serializers import (
@@ -76,6 +87,43 @@ def attendance_slot_state(selected_date, slot, now):
     if selected_date > now.date() or (selected_date == now.date() and now.time() < starts_at):
         return 'upcoming'
     return 'active'
+
+
+def safe_original_filename(filename):
+    leaf_name = re.split(r'[/\\]+', filename or '')[-1]
+    return (get_valid_filename(leaf_name) or 'course-file')[:255]
+
+
+def protected_course_file_response(field_file, original_filename, content_type, file_size, *, attachment):
+    if not field_file or not field_file.name:
+        raise Http404('文件不存在')
+
+    try:
+        exists = field_file.storage.exists(field_file.name)
+    except (OSError, ValueError):
+        exists = False
+    if not exists:
+        raise Http404('文件不存在')
+
+    if settings.COURSE_MATERIAL_USE_X_ACCEL:
+        prefix = settings.COURSE_MATERIAL_X_ACCEL_PREFIX.rstrip('/') + '/'
+        internal_path = prefix + quote(field_file.name.replace('\\', '/'), safe='/')
+        response = HttpResponse()
+        response['X-Accel-Redirect'] = internal_path
+        response['Content-Type'] = content_type or 'application/octet-stream'
+        response['Content-Disposition'] = content_disposition_header(attachment, original_filename)
+        if file_size:
+            response['Content-Length'] = file_size
+    else:
+        response = FileResponse(
+            field_file.open('rb'),
+            as_attachment=attachment,
+            filename=original_filename,
+            content_type=content_type or 'application/octet-stream',
+        )
+
+    response['Cache-Control'] = 'private, no-store'
+    return response
 
 
 class CurrentTrainingCampView(APIView):
@@ -385,10 +433,19 @@ class AdminAttendanceGenerateView(APIView):
 
 class CourseViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = CourseSerializer
-    permission_classes = [permissions.AllowAny]
+    parser_classes = [parsers.JSONParser, parsers.FormParser, parsers.MultiPartParser]
+
+    def get_permissions(self):
+        if self.action in ['upload_materials', 'delete_mind_map']:
+            return [IsAdminRole()]
+        return [permissions.IsAuthenticated()]
+
+    def get_throttles(self):
+        self.throttle_scope = 'upload' if self.action == 'upload_materials' else None
+        return super().get_throttles()
 
     def get_queryset(self):
-        queryset = Course.objects.all()
+        queryset = Course.objects.select_related('camp').prefetch_related('resources')
         camp = active_camp()
         if camp:
             queryset = queryset.filter(camp=camp)
@@ -398,6 +455,144 @@ class CourseViewSet(viewsets.ReadOnlyModelViewSet):
         if date:
             queryset = queryset.filter(date=date)
         return queryset
+
+    @action(detail=True, methods=['post'], url_path='materials')
+    def upload_materials(self, request, pk=None):
+        course = self.get_object()
+        mind_map = request.FILES.get('mind_map')
+        resource_files = request.FILES.getlist('resources')
+        if not mind_map and not resource_files:
+            return Response({'detail': '请选择思维导图或课程资料'}, status=status.HTTP_400_BAD_REQUEST)
+
+        existing_count = course.resources.count()
+        if existing_count + len(resource_files) > settings.COURSE_RESOURCE_MAX_FILES:
+            return Response(
+                {'resources': f'每门课程最多上传 {settings.COURSE_RESOURCE_MAX_FILES} 个资料文件'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        upload_size = (mind_map.size if mind_map else 0) + sum(item.size for item in resource_files)
+        if upload_size > settings.COURSE_MATERIAL_MAX_REQUEST_SIZE:
+            return Response(
+                {'detail': '单次上传总大小不能超过 200MB，请分批添加课程资料'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        mind_map_content_type_value = ''
+        try:
+            if mind_map:
+                validate_course_mind_map_file(mind_map)
+                mind_map_content_type_value = course_mind_map_content_type(mind_map)
+            for resource_file in resource_files:
+                validate_course_resource_file(resource_file)
+        except DjangoValidationError as exc:
+            return Response({'detail': exc.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+
+        old_mind_map_name = course.mind_map.name if course.mind_map else ''
+        saved_files = []
+        try:
+            with transaction.atomic():
+                if mind_map:
+                    original_name = safe_original_filename(mind_map.name)
+                    course.mind_map.save(original_name, mind_map, save=False)
+                    saved_files.append((course.mind_map.storage, course.mind_map.name))
+                    course.mind_map_original_filename = original_name
+                    course.mind_map_content_type = mind_map_content_type_value
+                    course.mind_map_file_size = mind_map.size
+                    course.save(update_fields=[
+                        'mind_map',
+                        'mind_map_original_filename',
+                        'mind_map_content_type',
+                        'mind_map_file_size',
+                    ])
+
+                for resource_file in resource_files:
+                    original_name = safe_original_filename(resource_file.name)
+                    resource = CourseResource(
+                        course=course,
+                        original_filename=original_name,
+                        content_type=course_resource_content_type(original_name),
+                        file_size=resource_file.size,
+                        created_by=request.user,
+                    )
+                    resource.file.save(original_name, resource_file, save=False)
+                    saved_files.append((resource.file.storage, resource.file.name))
+                    resource.save()
+        except Exception:
+            for storage_backend, stored_name in saved_files:
+                storage_backend.delete(stored_name)
+            raise
+
+        if mind_map and old_mind_map_name and old_mind_map_name != course.mind_map.name:
+            course.mind_map.storage.delete(old_mind_map_name)
+
+        course = self.get_queryset().get(pk=course.pk)
+        return Response(CourseSerializer(course, context={'request': request}).data)
+
+    @action(detail=True, methods=['delete'], url_path='mind-map')
+    def delete_mind_map(self, request, pk=None):
+        course = self.get_object()
+        if not course.mind_map:
+            return Response({'detail': '该课程没有思维导图'}, status=status.HTTP_404_NOT_FOUND)
+
+        storage_backend = course.mind_map.storage
+        stored_name = course.mind_map.name
+        course.mind_map = None
+        course.mind_map_original_filename = ''
+        course.mind_map_content_type = ''
+        course.mind_map_file_size = 0
+        course.save(update_fields=[
+            'mind_map',
+            'mind_map_original_filename',
+            'mind_map_content_type',
+            'mind_map_file_size',
+        ])
+        storage_backend.delete(stored_name)
+        course = self.get_queryset().get(pk=course.pk)
+        return Response(CourseSerializer(course, context={'request': request}).data)
+
+    @action(detail=True, methods=['get'], url_path='mind-map-file')
+    def mind_map_file(self, request, pk=None):
+        course = self.get_object()
+        return protected_course_file_response(
+            course.mind_map,
+            course.mind_map_original_filename or 'mind-map',
+            course.mind_map_content_type,
+            course.mind_map_file_size,
+            attachment=False,
+        )
+
+
+class CourseResourceViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action == 'destroy':
+            return [IsAdminRole()]
+        return [permissions.IsAuthenticated()]
+
+    def get_queryset(self):
+        queryset = CourseResource.objects.select_related('course', 'course__camp')
+        camp = active_camp()
+        return queryset.filter(course__camp=camp) if camp else queryset.none()
+
+    def destroy(self, request, *args, **kwargs):
+        resource = self.get_object()
+        course_id = resource.course_id
+        resource.delete()
+        course = Course.objects.prefetch_related('resources').get(pk=course_id)
+        return Response(CourseSerializer(course, context={'request': request}).data)
+
+    @action(detail=True, methods=['get'], url_path='file')
+    def file(self, request, pk=None):
+        resource = self.get_object()
+        return protected_course_file_response(
+            resource.file,
+            resource.original_filename,
+            resource.content_type,
+            resource.file_size,
+            attachment=resource.content_type != 'application/pdf',
+        )
 
 
 class WorkViewSet(viewsets.ModelViewSet):

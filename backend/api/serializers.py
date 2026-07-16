@@ -12,6 +12,7 @@ from rest_framework import serializers
 from .models import (
     ChunkedUpload,
     Course,
+    CourseResource,
     Like,
     Profile,
     Tag,
@@ -146,9 +147,31 @@ class ProfileSerializer(serializers.ModelSerializer):
         read_only_fields = ['role', 'created_at', 'updated_at']
 
 
+class CourseResourceSerializer(serializers.ModelSerializer):
+    file_type = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CourseResource
+        fields = [
+            'id',
+            'original_filename',
+            'content_type',
+            'file_size',
+            'file_type',
+            'created_at',
+        ]
+
+    def get_file_type(self, obj):
+        if obj.content_type == 'application/pdf':
+            return 'pdf'
+        return 'pptx'
+
+
 class CourseSerializer(serializers.ModelSerializer):
     status = serializers.SerializerMethodField()
     status_label = serializers.SerializerMethodField()
+    has_mind_map = serializers.SerializerMethodField()
+    resources = CourseResourceSerializer(many=True, read_only=True)
 
     class Meta:
         model = Course
@@ -166,8 +189,23 @@ class CourseSerializer(serializers.ModelSerializer):
             'status',
             'status_label',
             'sort_order',
+            'has_mind_map',
+            'mind_map_original_filename',
+            'mind_map_content_type',
+            'mind_map_file_size',
+            'resources',
         ]
-        read_only_fields = ['camp']
+        read_only_fields = [
+            'camp',
+            'has_mind_map',
+            'mind_map_original_filename',
+            'mind_map_content_type',
+            'mind_map_file_size',
+            'resources',
+        ]
+
+    def get_has_mind_map(self, obj):
+        return bool(obj.mind_map)
 
     def get_status(self, obj):
         now = timezone.localtime()

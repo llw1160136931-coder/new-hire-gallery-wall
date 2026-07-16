@@ -6,6 +6,7 @@ from .views import (
     AdminAttendanceGenerateView,
     AdminAttendanceOverviewView,
     CourseViewSet,
+    CourseResourceViewSet,
     CurrentTrainingCampView,
     LeaderboardView,
     MeView,
@@ -24,6 +25,7 @@ from .views import (
 
 router = DefaultRouter()
 router.register('courses', CourseViewSet, basename='course')
+router.register('course-resources', CourseResourceViewSet, basename='course-resource')
 router.register('works', WorkViewSet, basename='work')
 
 urlpatterns = [

@@ -8,6 +8,14 @@ from django.core.validators import RegexValidator
 from django.db import models
 from django.db.models import Q
 
+from .course_files import (
+    course_mind_map_upload_to,
+    course_resource_upload_to,
+    validate_course_mind_map_file,
+    validate_course_resource_file,
+)
+from .storage import protected_course_storage
+
 
 class TrainingCamp(models.Model):
     name = models.CharField(max_length=120)
@@ -141,6 +149,16 @@ class Course(models.Model):
     end_time = models.TimeField()
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.UPCOMING)
     sort_order = models.PositiveIntegerField(default=0)
+    mind_map = models.FileField(
+        upload_to=course_mind_map_upload_to,
+        storage=protected_course_storage,
+        validators=[validate_course_mind_map_file],
+        blank=True,
+        null=True,
+    )
+    mind_map_original_filename = models.CharField(max_length=255, blank=True)
+    mind_map_content_type = models.CharField(max_length=120, blank=True)
+    mind_map_file_size = models.PositiveBigIntegerField(default=0)
 
     class Meta:
         ordering = ['date', 'start_time', 'sort_order']
@@ -152,6 +170,32 @@ class Course(models.Model):
 
     def __str__(self):
         return f'{self.date} {self.title}'
+
+
+class CourseResource(models.Model):
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='resources')
+    file = models.FileField(
+        upload_to=course_resource_upload_to,
+        storage=protected_course_storage,
+        validators=[validate_course_resource_file],
+    )
+    original_filename = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=120)
+    file_size = models.PositiveBigIntegerField()
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='uploaded_course_resources',
+        blank=True,
+        null=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at', 'id']
+
+    def __str__(self):
+        return f'{self.course_id}:{self.original_filename}'
 
 
 class AttendanceSession(models.Model):

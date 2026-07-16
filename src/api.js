@@ -121,6 +121,37 @@ export async function apiRequest(path, options = {}) {
   return payload;
 }
 
+export async function apiFileRequest(path, options = {}) {
+  const { auth = true, headers, retry = true, ...fetchOptions } = options;
+  const token = getStoredTokens().access;
+  const requestHeaders = { ...headers };
+  if (auth && token) {
+    requestHeaders.Authorization = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...fetchOptions,
+    headers: requestHeaders,
+  });
+
+  if (response.status === 401 && auth && retry) {
+    const nextAccess = await refreshAccessToken();
+    if (nextAccess) {
+      return apiFileRequest(path, { ...options, retry: false });
+    }
+  }
+
+  if (!response.ok) {
+    const payload = await parseResponse(response);
+    throw new ApiError(buildErrorMessage(payload, "文件读取失败，请稍后再试"), response.status, payload);
+  }
+
+  return {
+    blob: await response.blob(),
+    contentType: response.headers.get("Content-Type") || "application/octet-stream",
+  };
+}
+
 export async function login(username, password) {
   const tokens = await apiRequest("/auth/token/", {
     method: "POST",
@@ -140,6 +171,12 @@ export const api = {
   adminAttendance: (date) => apiRequest(`/attendance/admin/overview/${date ? `?date=${encodeURIComponent(date)}` : ""}`),
   generateAttendance: () => apiRequest("/attendance/admin/generate/", { method: "POST", body: {} }),
   courses: (date) => apiRequest(date ? `/courses/?date=${date}` : "/courses/"),
+  uploadCourseMaterials: (id, formData) =>
+    apiRequest(`/courses/${id}/materials/`, { method: "POST", body: formData }),
+  deleteCourseMindMap: (id) => apiRequest(`/courses/${id}/mind-map/`, { method: "DELETE" }),
+  courseMindMapFile: (id) => apiFileRequest(`/courses/${id}/mind-map-file/`),
+  deleteCourseResource: (id) => apiRequest(`/course-resources/${id}/`, { method: "DELETE" }),
+  courseResourceFile: (id) => apiFileRequest(`/course-resources/${id}/file/`),
   works: (type) => apiRequest(type && type !== "all" ? `/works/?type=${type}` : "/works/"),
   myWorks: () => apiRequest("/works/my/"),
   pendingWorks: (filters = {}) => {

@@ -65,6 +65,9 @@ const zodiacOptions = [
 
 const fallbackTones = ["blue", "violet", "orange"];
 const CHUNK_SIZE = 5 * 1024 * 1024;
+const MAX_COURSE_RESOURCE_COUNT = 10;
+const COURSE_MIND_MAP_ACCEPT = ".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp";
+const COURSE_RESOURCE_ACCEPT = ".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation";
 const WELCOME_SEEN_KEY = "newHireGallery.welcomeSeen";
 const REVIEW_REJECT_TEMPLATES = [
   "作品介绍不够完整，请补充背景、亮点和创作过程。",
@@ -767,7 +770,17 @@ function FeedView({ camp, role }) {
           ))}
         </div>
       )}
-      {selectedCourse && <CourseDetailModal course={selectedCourse} onClose={() => setSelectedCourse(null)} />}
+      {selectedCourse && (
+        <CourseDetailModal
+          course={selectedCourse}
+          onClose={() => setSelectedCourse(null)}
+          onCourseChange={(nextCourse) => {
+            setCourses((current) => current.map((item) => (item.id === nextCourse.id ? nextCourse : item)));
+            setSelectedCourse(nextCourse);
+          }}
+          role={role}
+        />
+      )}
     </section>
   );
 }
@@ -1396,7 +1409,19 @@ function WorkDetailPage({ work, onBack, onLike, onVote, actionMessage, actionErr
   );
 }
 
-function CourseDetailModal({ course, onClose }) {
+function CourseDetailModal({ course, onClose, onCourseChange, role }) {
+  const [mindMapUrl, setMindMapUrl] = useState("");
+  const [mindMapLoading, setMindMapLoading] = useState(false);
+  const [mindMapError, setMindMapError] = useState("");
+  const [mindMapPreviewOpen, setMindMapPreviewOpen] = useState(false);
+  const [mindMapFile, setMindMapFile] = useState(null);
+  const [resourceFiles, setResourceFiles] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState("");
+  const [downloadingId, setDownloadingId] = useState(null);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
   useEffect(() => {
     const previousBodyOverflow = document.body.style.overflow;
     const previousPageOverflow = document.documentElement.style.overflow;
@@ -1418,6 +1443,149 @@ function CourseDetailModal({ course, onClose }) {
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [onClose]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = "";
+
+    async function loadMindMap() {
+      if (!course.has_mind_map) {
+        setMindMapUrl("");
+        setMindMapError("");
+        return;
+      }
+      setMindMapLoading(true);
+      setMindMapError("");
+      try {
+        const result = await api.courseMindMapFile(course.id);
+        objectUrl = URL.createObjectURL(result.blob);
+        if (!cancelled) setMindMapUrl(objectUrl);
+      } catch (loadError) {
+        if (!cancelled) setMindMapError(loadError.message || "思维导图加载失败");
+      } finally {
+        if (!cancelled) setMindMapLoading(false);
+      }
+    }
+
+    loadMindMap();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [course.has_mind_map, course.id, course.mind_map_file_size]);
+
+  function selectResources(event) {
+    const selected = Array.from(event.target.files || []);
+    const remainingCount = MAX_COURSE_RESOURCE_COUNT - course.resources.length - resourceFiles.length;
+    if (selected.length > remainingCount) {
+      setError(`每门课程最多保留 ${MAX_COURSE_RESOURCE_COUNT} 份资料，本次最多还能选择 ${Math.max(remainingCount, 0)} 份`);
+    } else {
+      setError("");
+    }
+    setResourceFiles((current) => {
+      const merged = [...current];
+      selected.forEach((file) => {
+        const duplicate = merged.some((item) => (
+          item.name === file.name && item.size === file.size && item.lastModified === file.lastModified
+        ));
+        if (!duplicate && course.resources.length + merged.length < MAX_COURSE_RESOURCE_COUNT) {
+          merged.push(file);
+        }
+      });
+      return merged;
+    });
+    event.target.value = "";
+  }
+
+  async function uploadMaterials(event) {
+    event.preventDefault();
+    if (!mindMapFile && resourceFiles.length === 0) {
+      setError("请先选择思维导图或课程资料");
+      return;
+    }
+
+    const formData = new FormData();
+    if (mindMapFile) formData.append("mind_map", mindMapFile);
+    resourceFiles.forEach((file) => formData.append("resources", file));
+    setSaving(true);
+    setMessage("");
+    setError("");
+    try {
+      const nextCourse = await api.uploadCourseMaterials(course.id, formData);
+      onCourseChange?.(nextCourse);
+      setMindMapFile(null);
+      setResourceFiles([]);
+      setMessage("课程资料已保存，学员现在可以查看了");
+    } catch (uploadError) {
+      setError(uploadError.message || "课程资料上传失败");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteMindMap() {
+    if (!window.confirm("确定删除这张课程思维导图吗？")) return;
+    setDeleting("mind-map");
+    setMessage("");
+    setError("");
+    try {
+      const nextCourse = await api.deleteCourseMindMap(course.id);
+      onCourseChange?.(nextCourse);
+      setMindMapPreviewOpen(false);
+      setMessage("思维导图已删除");
+    } catch (deleteError) {
+      setError(deleteError.message || "思维导图删除失败");
+    } finally {
+      setDeleting("");
+    }
+  }
+
+  async function deleteResource(resource) {
+    if (!window.confirm(`确定删除“${resource.original_filename}”吗？`)) return;
+    setDeleting(`resource-${resource.id}`);
+    setMessage("");
+    setError("");
+    try {
+      const nextCourse = await api.deleteCourseResource(resource.id);
+      onCourseChange?.(nextCourse);
+      setMessage("课程资料已删除");
+    } catch (deleteError) {
+      setError(deleteError.message || "课程资料删除失败");
+    } finally {
+      setDeleting("");
+    }
+  }
+
+  async function openResource(resource) {
+    const isPdf = resource.file_type === "pdf";
+    const previewWindow = isPdf ? window.open("", "_blank") : null;
+    setDownloadingId(resource.id);
+    setError("");
+    try {
+      const result = await api.courseResourceFile(resource.id);
+      const objectUrl = URL.createObjectURL(result.blob);
+      if (isPdf) {
+        if (previewWindow) {
+          previewWindow.location.href = objectUrl;
+        } else {
+          window.location.href = objectUrl;
+        }
+      } else {
+        const downloadLink = document.createElement("a");
+        downloadLink.href = objectUrl;
+        downloadLink.download = resource.original_filename;
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        downloadLink.remove();
+      }
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+    } catch (downloadError) {
+      previewWindow?.close();
+      setError(downloadError.message || "资料打开失败");
+    } finally {
+      setDownloadingId(null);
+    }
+  }
 
   return (
     <div className="courseDetailOverlay" onClick={onClose} role="presentation">
@@ -1446,7 +1614,124 @@ function CourseDetailModal({ course, onClose }) {
           <span>课程内容</span>
           <p>{course.content || "课程内容待补充。"}</p>
         </div>
+        <section className="courseMaterialSection">
+          <div className="courseMaterialTitle">
+            <div>
+              <span>课程思维导图</span>
+              <h3>先看全貌，再抓重点</h3>
+            </div>
+            {role === "admin" && course.has_mind_map && (
+              <button disabled={deleting === "mind-map"} onClick={deleteMindMap} type="button">
+                {deleting === "mind-map" ? "删除中..." : "删除"}
+              </button>
+            )}
+          </div>
+          {mindMapLoading ? (
+            <div className="courseMaterialEmpty">正在加载思维导图...</div>
+          ) : mindMapUrl ? (
+            <button className="courseMindMap" onClick={() => setMindMapPreviewOpen(true)} type="button">
+              <img alt={`${course.title}思维导图`} src={mindMapUrl} />
+              <span>点击放大查看</span>
+            </button>
+          ) : (
+            <div className="courseMaterialEmpty">{mindMapError || "这门课程暂未上传思维导图"}</div>
+          )}
+        </section>
+
+        <section className="courseMaterialSection">
+          <div className="courseMaterialTitle">
+            <div>
+              <span>课程资料</span>
+              <h3>讲义与课堂课件</h3>
+            </div>
+            <strong>{course.resources.length} 份</strong>
+          </div>
+          {course.resources.length > 0 ? (
+            <div className="courseResourceList">
+              {course.resources.map((resource) => (
+                <article key={resource.id}>
+                  <span className={`courseResourceIcon ${resource.file_type}`}>{resource.file_type.toUpperCase()}</span>
+                  <div>
+                    <strong>{resource.original_filename}</strong>
+                    <small>{formatFileSize(resource.file_size)} · {resource.file_type === "pdf" ? "支持在线查看" : "下载后查看"}</small>
+                  </div>
+                  <button disabled={downloadingId === resource.id} onClick={() => openResource(resource)} type="button">
+                    {downloadingId === resource.id ? "读取中..." : resource.file_type === "pdf" ? "查看" : "下载"}
+                  </button>
+                  {role === "admin" && (
+                    <button
+                      className="courseResourceDelete"
+                      disabled={deleting === `resource-${resource.id}`}
+                      onClick={() => deleteResource(resource)}
+                      type="button"
+                    >
+                      {deleting === `resource-${resource.id}` ? "删除中" : "删除"}
+                    </button>
+                  )}
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="courseMaterialEmpty">这门课程暂未上传资料</div>
+          )}
+        </section>
+
+        {role === "admin" && (
+          <form className="courseMaterialAdmin" onSubmit={uploadMaterials}>
+            <div className="courseMaterialAdminHead">
+              <span>管理员资料管理</span>
+              <p>思维导图支持 JPG、PNG、WebP（10MB 内）；资料支持 PDF、PPTX（单个 100MB 内、单次 200MB 内，最多 10 份）。</p>
+            </div>
+            <label className="courseMaterialPicker">
+              <span>{course.has_mind_map ? "替换思维导图" : "上传思维导图"}</span>
+              <input
+                accept={COURSE_MIND_MAP_ACCEPT}
+                onChange={(event) => {
+                  setMindMapFile(event.target.files?.[0] || null);
+                  event.target.value = "";
+                }}
+                type="file"
+              />
+              <strong>{mindMapFile ? mindMapFile.name : "选择图片"}</strong>
+            </label>
+            <label className="courseMaterialPicker">
+              <span>添加 PDF / PPTX</span>
+              <input
+                accept={COURSE_RESOURCE_ACCEPT}
+                disabled={course.resources.length + resourceFiles.length >= MAX_COURSE_RESOURCE_COUNT}
+                multiple
+                onChange={selectResources}
+                type="file"
+              />
+              <strong>选择资料</strong>
+            </label>
+            {resourceFiles.length > 0 && (
+              <div className="coursePendingResources">
+                {resourceFiles.map((file, index) => (
+                  <div key={`${file.name}-${file.size}-${file.lastModified}`}>
+                    <span>{index + 1}</span>
+                    <strong>{file.name}</strong>
+                    <small>{formatFileSize(file.size)}</small>
+                    <button onClick={() => setResourceFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))} type="button">移除</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button className="courseMaterialSubmit" disabled={saving || (!mindMapFile && resourceFiles.length === 0)} type="submit">
+              {saving ? "上传保存中..." : "保存课程资料"}
+            </button>
+          </form>
+        )}
+        {error && <p className="errorText courseMaterialNotice">{error}</p>}
+        {message && <p className="successText courseMaterialNotice">{message}</p>}
       </article>
+      {mindMapPreviewOpen && mindMapUrl && (
+        <div className="courseMindMapLightbox" onClick={() => setMindMapPreviewOpen(false)} role="presentation">
+          <button onClick={() => setMindMapPreviewOpen(false)} type="button" aria-label="关闭思维导图">×</button>
+          <img alt={`${course.title}思维导图大图`} onClick={(event) => event.stopPropagation()} src={mindMapUrl} />
+          <span>双指缩放或拖动查看细节</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -1592,7 +1877,17 @@ function CourseView({ camp, role }) {
             ))}
           </div>
         )}
-        {selectedCourse && <CourseDetailModal course={selectedCourse} onClose={() => setSelectedCourse(null)} />}
+        {selectedCourse && (
+          <CourseDetailModal
+            course={selectedCourse}
+            onClose={() => setSelectedCourse(null)}
+            onCourseChange={(nextCourse) => {
+              setCourses((current) => current.map((item) => (item.id === nextCourse.id ? nextCourse : item)));
+              setSelectedCourse(nextCourse);
+            }}
+            role={role}
+          />
+        )}
       </section>
     </div>
   );

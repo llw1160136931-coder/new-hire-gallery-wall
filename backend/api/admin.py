@@ -6,6 +6,7 @@ from .models import (
     AttendanceSession,
     ChunkedUpload,
     Course,
+    CourseResource,
     Like,
     Profile,
     Tag,
@@ -42,6 +43,33 @@ class CourseAdmin(admin.ModelAdmin):
     list_display = ['camp', 'date', 'start_time', 'end_time', 'topic', 'title', 'teacher', 'room', 'status']
     list_filter = ['camp', 'date', 'status', 'topic']
     search_fields = ['title', 'topic', 'teacher', 'room', 'content']
+    fields = [
+        'camp',
+        'title',
+        'topic',
+        'teacher',
+        'room',
+        'content',
+        'date',
+        'start_time',
+        'end_time',
+        'status',
+        'sort_order',
+    ]
+
+
+class CourseResourceInline(admin.TabularInline):
+    model = CourseResource
+    extra = 0
+    can_delete = False
+    fields = ['original_filename', 'content_type', 'file_size', 'created_by', 'created_at']
+    readonly_fields = fields
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+CourseAdmin.inlines = [CourseResourceInline]
 
 
 @admin.register(AttendanceSession)

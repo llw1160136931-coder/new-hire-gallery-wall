@@ -2,6 +2,7 @@ from datetime import datetime, time
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -11,6 +12,7 @@ from .models import AttendanceAttempt, AttendanceRecord, AttendanceSession, Prof
 
 class AttendanceApiTests(TestCase):
     def setUp(self):
+        cache.clear()
         self.client = APIClient()
         self.camp = TrainingCamp.get_active()
         if not self.camp:
