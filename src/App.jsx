@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, clearTokens, getStoredTokens, login } from "./api";
 import mascotFireReady from "./assets/mascot-fire-ready.png";
 import mascotFireShare from "./assets/mascot-fire-share.png";
@@ -641,8 +641,8 @@ function FeedView({ camp, role }) {
         />
       )}
 
-      {actionError && <p className="errorText interactionNotice">{actionError}</p>}
-      {actionMessage && <p className="successText interactionNotice">{actionMessage}</p>}
+      {actionError && <p className="errorText interactionNotice" role="alert">{actionError}</p>}
+      {actionMessage && <p aria-live="polite" className="successText interactionNotice" role="status">{actionMessage}</p>}
 
       <div className="feedHero">
         <div>
@@ -738,17 +738,19 @@ function FeedView({ camp, role }) {
         </div>
       </div>
 
-      <div className="filterRow">
-        <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")} type="button">
-          推荐
-        </button>
-        <button className={filter === "training" ? "active" : ""} onClick={() => setFilter("training")} type="button">
-          培训作品
-        </button>
-        <button className={filter === "ai" ? "active" : ""} onClick={() => setFilter("ai")} type="button">
-          AI 作品
-        </button>
-        {role === "admin" && <button type="button">审核视角</button>}
+      <div className="feedToolbar">
+        <div className="filterRow" aria-label="作品类型" role="group">
+          <button aria-pressed={filter === "all"} className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")} type="button">
+            推荐
+          </button>
+          <button aria-pressed={filter === "training"} className={filter === "training" ? "active" : ""} onClick={() => setFilter("training")} type="button">
+            培训作品
+          </button>
+          <button aria-pressed={filter === "ai"} className={filter === "ai" ? "active" : ""} onClick={() => setFilter("ai")} type="button">
+            AI 作品
+          </button>
+        </div>
+        <span className="feedWorkCount"><strong>{works.length}</strong> 个作品</span>
       </div>
 
       {error && <p className="errorText">{error}</p>}
@@ -757,7 +759,7 @@ function FeedView({ camp, role }) {
       ) : works.length === 0 ? (
         <EmptyState title="还没有已发布作品" text="提交作品并通过审核后，会出现在这里。" />
       ) : (
-        <div className="masonry">
+        <MasonryGrid itemsKey={works.map((work) => work.id).join("|")}>
           {works.map((work, index) => (
             <WorkCard
               index={index}
@@ -768,7 +770,7 @@ function FeedView({ camp, role }) {
               work={work}
             />
           ))}
-        </div>
+        </MasonryGrid>
       )}
       {selectedCourse && (
         <CourseDetailModal
@@ -914,8 +916,8 @@ function WorksGalleryView({ role }) {
         </label>
       </div>
 
-      {actionError && <p className="errorText interactionNotice">{actionError}</p>}
-      {actionMessage && <p className="successText interactionNotice">{actionMessage}</p>}
+      {actionError && <p className="errorText interactionNotice" role="alert">{actionError}</p>}
+      {actionMessage && <p aria-live="polite" className="successText interactionNotice" role="status">{actionMessage}</p>}
       {error && <p className="errorText">{error}</p>}
 
       {loading ? (
@@ -1076,30 +1078,23 @@ function WorkCard({ work, index, onLike, onOpen, onVote }) {
   const tone = fallbackTones[index % fallbackTones.length];
 
   return (
-    <article
-      className={`workCard card${index}`}
-      onClick={onOpen}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onOpen();
-        }
-      }}
-      role="button"
-      tabIndex="0"
-    >
+    <article className="workCard">
       {work.media_type === "video" && attachment ? (
         <video className="workImage" controls src={attachment} />
-      ) : image ? (
-        <div className="workImageStack">
-          <img className="workImage" src={image} alt={work.title} />
-          {images.length > 1 && <span>共 {images.length} 张</span>}
-        </div>
       ) : (
-        <div className={`workImage generated ${tone}`}>
-          <span>{mediaTypeLabel(work)}</span>
-          <strong>{work.title}</strong>
-        </div>
+        <button aria-label={`查看 ${work.title} 详情`} className="workPreviewButton" onClick={onOpen} type="button">
+          {image ? (
+            <div className="workImageStack">
+              <img className="workImage" src={image} alt={work.title} loading="lazy" />
+              {images.length > 1 && <span>共 {images.length} 张</span>}
+            </div>
+          ) : (
+            <div className={`workImage generated ${tone}`}>
+              <span>{mediaTypeLabel(work)}</span>
+              <strong>{work.title}</strong>
+            </div>
+          )}
+        </button>
       )}
       <div className="workBody">
         <div className="tagLine">
@@ -1107,46 +1102,95 @@ function WorkCard({ work, index, onLike, onOpen, onVote }) {
           {(work.tags || []).slice(0, 2).map((tag) => <span key={tag}>#{tag}</span>)}
           <span>{work.vote_count ?? 0} 票</span>
         </div>
-        <h3>{work.title}</h3>
+        <h3>
+          <button className="workTitleButton" onClick={onOpen} type="button">{work.title}</button>
+        </h3>
         <p>{work.description}</p>
-        <div className="authorLine">
-          <span className="avatar">{(work.author_name || "新").slice(0, 1)}</span>
-          <strong>{work.author_name || "新员工"}</strong>
-          <small>{work.status_label || "已发布"}</small>
-        </div>
-        {work.link && (
-          <a className="workLink" href={work.link} onClick={(event) => event.stopPropagation()} rel="noreferrer" target="_blank">
-            查看作品链接
-          </a>
+        {(work.link || attachment) && (
+          <div className="workResources">
+            {work.link && (
+              <a className="workLink" href={work.link} rel="noreferrer" target="_blank">
+                查看链接 ↗
+              </a>
+            )}
+            {attachment && (
+              <a className="workLink" href={attachment} rel="noreferrer" target="_blank">
+                打开{mediaTypeLabel(work)} ↗
+              </a>
+            )}
+          </div>
         )}
-        {attachment && (
-          <a className="workLink" href={attachment} onClick={(event) => event.stopPropagation()} rel="noreferrer" target="_blank">
-            打开{mediaTypeLabel(work)}
-          </a>
-        )}
-        <div className="actionRow">
-          <button
-            onClick={(event) => {
-              event.stopPropagation();
-              onLike();
-            }}
-            type="button"
-          >
-            喜欢 {work.like_count ?? 0}
-          </button>
-          <button
-            onClick={(event) => {
-              event.stopPropagation();
-              onVote();
-            }}
-            type="button"
-          >
-            投票
-          </button>
+        <div className="workFooter">
+          <div className="authorLine">
+            <span className="avatar">{(work.author_name || "新").slice(0, 1)}</span>
+            <strong>{work.author_name || "新员工"}</strong>
+            <small>{work.status_label || "已发布"}</small>
+          </div>
+          <div className="actionRow">
+            <button
+              aria-label={`喜欢 ${work.title}，当前 ${work.like_count ?? 0} 个喜欢`}
+              onClick={onLike}
+              type="button"
+            >
+              ♡ {work.like_count ?? 0}
+            </button>
+            <button
+              aria-label={`为 ${work.title} 投票，当前 ${work.vote_count ?? 0} 票`}
+              onClick={onVote}
+              type="button"
+            >
+              投票
+            </button>
+          </div>
         </div>
       </div>
     </article>
   );
+}
+
+function MasonryGrid({ children, itemsKey }) {
+  const gridRef = useRef(null);
+
+  useLayoutEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) {
+      return undefined;
+    }
+
+    let animationFrame = 0;
+    const resizeCards = () => {
+      const rowHeight = Number.parseFloat(window.getComputedStyle(grid).gridAutoRows) || 4;
+      const measurements = [...grid.children].map((card) => {
+        const marginBottom = Number.parseFloat(window.getComputedStyle(card).marginBottom) || 0;
+        const cardHeight = card.getBoundingClientRect().height;
+        return {
+          card,
+          rowSpan: Math.max(1, Math.ceil((cardHeight + marginBottom) / rowHeight)),
+        };
+      });
+      measurements.forEach(({ card, rowSpan }) => {
+        card.style.gridRowEnd = `span ${rowSpan}`;
+      });
+    };
+    const scheduleResize = () => {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(resizeCards);
+    };
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleResize);
+
+    [...grid.children].forEach((card) => resizeObserver?.observe(card));
+    resizeObserver?.observe(grid);
+    window.addEventListener("resize", scheduleResize);
+    resizeCards();
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.removeEventListener("resize", scheduleResize);
+      resizeObserver?.disconnect();
+    };
+  }, [itemsKey]);
+
+  return <div className="masonry" ref={gridRef}>{children}</div>;
 }
 
 function WorkImageCarousel({ images, title, onOpen }) {
@@ -1335,8 +1379,8 @@ function WorkDetailPage({ work, onBack, onLike, onVote, actionMessage, actionErr
         <button onClick={onBack} type="button">‹ 返回</button>
         <span>作品详情</span>
       </div>
-      {actionError && <p className="errorText interactionNotice">{actionError}</p>}
-      {actionMessage && <p className="successText interactionNotice">{actionMessage}</p>}
+      {actionError && <p className="errorText interactionNotice" role="alert">{actionError}</p>}
+      {actionMessage && <p aria-live="polite" className="successText interactionNotice" role="status">{actionMessage}</p>}
       <article className={`workDetailCard ${hasVisualMedia ? "" : "withoutVisual"}`}>
         {hasVisualMedia && (
           <div className="workDetailMedia">
