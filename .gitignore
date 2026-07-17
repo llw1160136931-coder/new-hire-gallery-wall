@@ -13,6 +13,12 @@ backend/.test-tmp/
 backend/.codex-stage/
 backend/*.log
 backend/load_tests/__pycache__/
+backend/load_tests/fixtures/
+backend/load_tests/results/
+backend/load_tests/*.csv
+backend/load_tests/*.jsonl
+*loadtest-accounts*.csv
+*loadtest_accounts*.csv
 data-backup*.json
 pgdata/
 __pycache__/

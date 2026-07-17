@@ -140,6 +140,27 @@ class CurrentTrainingCampView(APIView):
         return Response(TrainingCampSerializer(camp, context={'request': request}).data)
 
 
+class LoadTestIdentityView(APIView):
+    """Public, read-only proof that this backend is the intended load-test target."""
+
+    authentication_classes = []
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = []
+
+    def get(self, request):
+        camp = active_camp()
+        loadtest_mode = settings.LOADTEST_MODE
+        response = Response({
+            'schema_version': 1,
+            'loadtest_mode': loadtest_mode,
+            'target_id': settings.LOADTEST_TARGET_ID if loadtest_mode else None,
+            'active_camp_slug': camp.slug if camp else None,
+        })
+        response['Cache-Control'] = 'no-store, max-age=0'
+        response['Pragma'] = 'no-cache'
+        return response
+
+
 class ThrottledTokenObtainPairView(TokenObtainPairView):
     throttle_scope = 'login'
 

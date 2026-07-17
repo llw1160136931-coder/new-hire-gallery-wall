@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+import re
 from pathlib import Path
 from datetime import timedelta
 from django.core.exceptions import ImproperlyConfigured
@@ -50,6 +51,19 @@ if IS_PRODUCTION and DEBUG:
     raise ImproperlyConfigured('生产环境不能开启 DJANGO_DEBUG')
 
 ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', '127.0.0.1,localhost').split(',')
+
+# A load-test backend must opt in explicitly and identify itself with a stable,
+# non-secret target ID. The public identity endpoint exposes only these values
+# and the active camp slug so clients can fail closed before writes.
+_LOADTEST_MODE_RAW = os.environ.get('DJANGO_LOADTEST_MODE', 'false').strip().lower()
+if _LOADTEST_MODE_RAW not in {'true', 'false'}:
+    raise ImproperlyConfigured('DJANGO_LOADTEST_MODE must be exactly true or false')
+LOADTEST_MODE = _LOADTEST_MODE_RAW == 'true'
+LOADTEST_TARGET_ID = os.environ.get('LOADTEST_TARGET_ID', '').strip()
+if LOADTEST_MODE and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,127}', LOADTEST_TARGET_ID):
+    raise ImproperlyConfigured(
+        'LOADTEST_TARGET_ID must be 8-128 safe characters when DJANGO_LOADTEST_MODE=true'
+    )
 
 
 # Application definition
@@ -156,7 +170,7 @@ STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_ROOT = Path(os.environ.get('DJANGO_MEDIA_ROOT', BASE_DIR / 'media'))
 COURSE_MATERIAL_ROOT = Path(os.environ.get('COURSE_MATERIAL_ROOT', BASE_DIR / 'protected_course_files'))
 COURSE_MIND_MAP_MAX_SIZE = int(os.environ.get('COURSE_MIND_MAP_MAX_SIZE', 10 * 1024 * 1024))
 COURSE_MIND_MAP_MAX_PIXELS = int(os.environ.get('COURSE_MIND_MAP_MAX_PIXELS', 40_000_000))
@@ -177,7 +191,9 @@ COURSE_MATERIAL_X_ACCEL_PREFIX = os.environ.get(
 )
 WORK_MAX_UPLOAD_SIZE = int(os.environ.get('WORK_MAX_UPLOAD_SIZE', 500 * 1024 * 1024))
 WORK_HTML_MAX_UPLOAD_SIZE = int(os.environ.get('WORK_HTML_MAX_UPLOAD_SIZE', 20 * 1024 * 1024))
-WORK_UPLOAD_CHUNK_DIR = MEDIA_ROOT / 'upload_chunks'
+WORK_UPLOAD_CHUNK_DIR = Path(
+    os.environ.get('DJANGO_WORK_UPLOAD_CHUNK_DIR', MEDIA_ROOT / 'upload_chunks')
+)
 WORK_MAX_UPLOAD_CHUNK_SIZE = int(os.environ.get('WORK_MAX_UPLOAD_CHUNK_SIZE', 8 * 1024 * 1024))
 WORK_MAX_UPLOAD_CHUNKS = int(os.environ.get('WORK_MAX_UPLOAD_CHUNKS', 1000))
 WORK_MAX_ACTIVE_UPLOADS = int(os.environ.get('WORK_MAX_ACTIVE_UPLOADS', 5))

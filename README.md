@@ -208,7 +208,9 @@ location /_protected_course_files/ {
 
 ## 并发测试
 
-`backend/load_tests/run_load_test.py` 提供 `login`、`public`、`auth-read` 和 `mixed` 四个场景，可模拟 100 个独立用户。脚本会创建和清理测试数据，因此只允许连接文件名包含 `loadtest` 的独立数据库，严禁直接连接生产数据库。
+项目现提供完整 Locust 压测套件，可模拟 5 人冒烟、100 人混合使用、100 人同时上传，以及最高 200 人极限测试；同时采集服务器资源、生成性能报告，并核对点赞投票与上传文件的数据一致性。写入前会同时核验测试域名、后端压测模式、目标 ID 和当前压测培训期，任何一项不符都会停止，避免误写正式数据库。
+
+完整安全流程和命令见 [`backend/load_tests/README.md`](backend/load_tests/README.md)。
 
 ## 本地联调顺序
 
