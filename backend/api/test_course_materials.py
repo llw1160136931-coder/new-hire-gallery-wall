@@ -54,9 +54,9 @@ class CourseMaterialApiTests(TestCase):
         self.admin.profile.role = Profile.Role.ADMIN
         self.admin.profile.save(update_fields=['role'])
 
-    def image_file(self, name='思维导图.png'):
+    def image_file(self, name='思维导图.png', size=(20, 12)):
         stream = io.BytesIO()
-        Image.new('RGB', (20, 12), '#ff3344').save(stream, format='PNG')
+        Image.new('RGB', size, '#ff3344').save(stream, format='PNG')
         return SimpleUploadedFile(name, stream.getvalue(), content_type='image/png')
 
     def pdf_file(self, name='课程讲义.pdf'):
@@ -209,6 +209,33 @@ class CourseMaterialApiTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self.course.resources.count(), 0)
+
+    def test_mind_map_pixel_limit_reports_dimensions_and_keeps_existing_file(self):
+        self.client.force_authenticate(self.admin)
+        with self.settings(COURSE_MIND_MAP_MAX_PIXELS=240):
+            first_response = self.client.post(
+                f'/api/courses/{self.course.pk}/materials/',
+                {'mind_map': self.image_file('可用版本.png')},
+                format='multipart',
+            )
+        self.assertEqual(first_response.status_code, 200, first_response.data)
+        self.course.refresh_from_db()
+        original_name = self.course.mind_map.name
+        original_path = Path(self.course.mind_map.path)
+
+        with self.settings(COURSE_MIND_MAP_MAX_PIXELS=239):
+            oversized_response = self.client.post(
+                f'/api/courses/{self.course.pk}/materials/',
+                {'mind_map': self.image_file('超限版本.png')},
+                format='multipart',
+            )
+
+        self.assertEqual(oversized_response.status_code, 400)
+        self.assertIn('20 × 12', oversized_response.data['detail'])
+        self.assertIn('239', oversized_response.data['detail'])
+        self.course.refresh_from_db()
+        self.assertEqual(self.course.mind_map.name, original_name)
+        self.assertTrue(original_path.exists())
 
     def test_replacing_and_deleting_mind_map_cleans_up_old_file(self):
         self.client.force_authenticate(self.admin)

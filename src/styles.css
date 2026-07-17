@@ -3184,6 +3184,7 @@ body.workImageLightboxOpen .sideNav {
 
 .courseMaterialAdminHead,
 .coursePendingResources,
+.courseMindMapSelectionNote,
 .courseMaterialSubmit,
 .courseMaterialNotice {
   grid-column: 1 / -1;
@@ -3229,6 +3230,22 @@ body.workImageLightboxOpen .sideNav {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.courseMindMapSelectionNote {
+  margin: -2px 2px 0;
+  border-radius: 12px;
+  padding: 9px 11px;
+  background: #effaf8;
+  color: #12836c;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.55;
+}
+
+.courseMindMapSelectionNote.isProcessing {
+  background: #fff5e8;
+  color: #a05b00;
 }
 
 .coursePendingResources {

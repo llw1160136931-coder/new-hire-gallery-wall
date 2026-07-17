@@ -52,8 +52,13 @@ def validate_course_mind_map_file(uploaded_file):
     try:
         _reset_file(uploaded_file)
         with Image.open(uploaded_file) as image:
-            if image.width * image.height > settings.COURSE_MIND_MAP_MAX_PIXELS:
-                raise ValidationError('思维导图图片尺寸过大。')
+            pixel_count = image.width * image.height
+            max_pixels = settings.COURSE_MIND_MAP_MAX_PIXELS
+            if pixel_count > max_pixels:
+                raise ValidationError(
+                    f'思维导图分辨率过高：{image.width} × {image.height}（{pixel_count:,} 像素），'
+                    f'服务器上限为 {max_pixels:,} 像素。请等比例缩小后重试。'
+                )
             image.verify()
             image_format = image.format
         if image_format not in COURSE_MIND_MAP_CONTENT_TYPES:

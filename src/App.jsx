@@ -16,6 +16,10 @@ import {
   mergeSelectedWorkFiles,
   WORK_FILE_ACCEPT,
 } from "./workFileSelection";
+import {
+  COURSE_MIND_MAP_MAX_PIXELS,
+  optimizeCourseMindMapFile,
+} from "./courseMindMapImage";
 
 const studentTabs = [
   { id: "feed", label: "灵感", icon: "✦" },
@@ -1500,12 +1504,15 @@ function CourseDetailModal({ course, onClose, onCourseChange, role }) {
   const [mindMapError, setMindMapError] = useState("");
   const [mindMapPreviewOpen, setMindMapPreviewOpen] = useState(false);
   const [mindMapFile, setMindMapFile] = useState(null);
+  const [mindMapSelectionNote, setMindMapSelectionNote] = useState("");
+  const [optimizingMindMap, setOptimizingMindMap] = useState(false);
   const [resourceFiles, setResourceFiles] = useState([]);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState("");
   const [downloadingId, setDownloadingId] = useState(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const mindMapSelectionId = useRef(0);
 
   useEffect(() => {
     const previousBodyOverflow = document.body.style.overflow;
@@ -1559,6 +1566,44 @@ function CourseDetailModal({ course, onClose, onCourseChange, role }) {
     };
   }, [course.has_mind_map, course.id, course.mind_map_file_size]);
 
+  async function selectMindMap(event) {
+    const selectedFile = event.target.files?.[0] || null;
+    event.target.value = "";
+    if (!selectedFile) return;
+
+    const selectionId = mindMapSelectionId.current + 1;
+    mindMapSelectionId.current = selectionId;
+    setOptimizingMindMap(true);
+    setMindMapFile(null);
+    setMindMapSelectionNote("正在检查图片尺寸并准备上传...");
+    setMessage("");
+    setError("");
+
+    try {
+      const result = await optimizeCourseMindMapFile(selectedFile);
+      if (selectionId !== mindMapSelectionId.current) return;
+
+      setMindMapFile(result.file);
+      if (result.optimized) {
+        setMindMapSelectionNote(
+          `已自动优化：${result.originalWidth} × ${result.originalHeight}（${formatFileSize(result.originalSize)}）`
+          + ` → ${result.width} × ${result.height}（${formatFileSize(result.file.size)}）`,
+        );
+      } else {
+        setMindMapSelectionNote(
+          `图片尺寸 ${result.width} × ${result.height}，大小 ${formatFileSize(result.file.size)}，可以直接上传。`,
+        );
+      }
+    } catch (selectionError) {
+      if (selectionId !== mindMapSelectionId.current) return;
+      setMindMapFile(null);
+      setMindMapSelectionNote("");
+      setError(selectionError.message || "思维导图处理失败，请重新选择图片");
+    } finally {
+      if (selectionId === mindMapSelectionId.current) setOptimizingMindMap(false);
+    }
+  }
+
   function selectResources(event) {
     const selected = Array.from(event.target.files || []);
     const remainingCount = MAX_COURSE_RESOURCE_COUNT - course.resources.length - resourceFiles.length;
@@ -1584,6 +1629,10 @@ function CourseDetailModal({ course, onClose, onCourseChange, role }) {
 
   async function uploadMaterials(event) {
     event.preventDefault();
+    if (optimizingMindMap) {
+      setError("思维导图正在自动优化，请稍候再保存");
+      return;
+    }
     if (!mindMapFile && resourceFiles.length === 0) {
       setError("请先选择思维导图或课程资料");
       return;
@@ -1599,6 +1648,7 @@ function CourseDetailModal({ course, onClose, onCourseChange, role }) {
       const nextCourse = await api.uploadCourseMaterials(course.id, formData);
       onCourseChange?.(nextCourse);
       setMindMapFile(null);
+      setMindMapSelectionNote("");
       setResourceFiles([]);
       setMessage("课程资料已保存，学员现在可以查看了");
     } catch (uploadError) {
@@ -1765,19 +1815,20 @@ function CourseDetailModal({ course, onClose, onCourseChange, role }) {
           <form className="courseMaterialAdmin" onSubmit={uploadMaterials}>
             <div className="courseMaterialAdminHead">
               <span>管理员资料管理</span>
-              <p>思维导图支持 JPG、PNG、WebP（10MB 内）；资料支持 PDF、PPTX（单个 100MB 内、单次 200MB 内，最多 10 份）。</p>
+              <p>
+                思维导图支持 JPG、PNG、WebP（上传成品 10MB 内、最多 {COURSE_MIND_MAP_MAX_PIXELS / 10_000} 万像素，
+                超出时自动等比例优化）；资料支持 PDF、PPTX（单个 100MB 内、单次 200MB 内，最多 10 份）。
+              </p>
             </div>
             <label className="courseMaterialPicker">
               <span>{course.has_mind_map ? "替换思维导图" : "上传思维导图"}</span>
               <input
                 accept={COURSE_MIND_MAP_ACCEPT}
-                onChange={(event) => {
-                  setMindMapFile(event.target.files?.[0] || null);
-                  event.target.value = "";
-                }}
+                disabled={saving || optimizingMindMap}
+                onChange={selectMindMap}
                 type="file"
               />
-              <strong>{mindMapFile ? mindMapFile.name : "选择图片"}</strong>
+              <strong>{optimizingMindMap ? "正在优化大图..." : mindMapFile ? mindMapFile.name : "选择图片"}</strong>
             </label>
             <label className="courseMaterialPicker">
               <span>添加 PDF / PPTX</span>
@@ -1790,6 +1841,11 @@ function CourseDetailModal({ course, onClose, onCourseChange, role }) {
               />
               <strong>选择资料</strong>
             </label>
+            {mindMapSelectionNote && (
+              <p aria-live="polite" className={`courseMindMapSelectionNote${optimizingMindMap ? " isProcessing" : ""}`}>
+                {mindMapSelectionNote}
+              </p>
+            )}
             {resourceFiles.length > 0 && (
               <div className="coursePendingResources">
                 {resourceFiles.map((file, index) => (
@@ -1802,8 +1858,8 @@ function CourseDetailModal({ course, onClose, onCourseChange, role }) {
                 ))}
               </div>
             )}
-            <button className="courseMaterialSubmit" disabled={saving || (!mindMapFile && resourceFiles.length === 0)} type="submit">
-              {saving ? "上传保存中..." : "保存课程资料"}
+            <button className="courseMaterialSubmit" disabled={saving || optimizingMindMap || (!mindMapFile && resourceFiles.length === 0)} type="submit">
+              {optimizingMindMap ? "正在优化思维导图..." : saving ? "上传保存中..." : "保存课程资料"}
             </button>
           </form>
         )}
