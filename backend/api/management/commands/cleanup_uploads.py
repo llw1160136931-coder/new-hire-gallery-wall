@@ -25,5 +25,7 @@ class Command(BaseCommand):
             shutil.rmtree(Path(settings.WORK_UPLOAD_CHUNK_DIR) / str(upload.upload_id), ignore_errors=True)
             if upload.file:
                 upload.file.delete(save=False)
+            if upload.protected_file:
+                upload.protected_file.delete(save=False)
             upload.delete()
         self.stdout.write(self.style.SUCCESS(f'Removed {count} expired upload session(s).'))

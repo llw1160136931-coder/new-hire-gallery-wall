@@ -57,6 +57,7 @@ from .serializers import (
     media_type_from_content_type,
     validate_file_signature,
 )
+from .work_files import is_html_filename
 
 
 MAX_ATTENDANCE_FAILED_ATTEMPTS = 5
@@ -123,6 +124,9 @@ def protected_course_file_response(field_file, original_filename, content_type, 
         )
 
     response['Cache-Control'] = 'private, no-store'
+    response['X-Content-Type-Options'] = 'nosniff'
+    if attachment and (content_type or 'application/octet-stream') == 'application/octet-stream':
+        response['Content-Security-Policy'] = "sandbox; default-src 'none'"
     return response
 
 
@@ -602,7 +606,7 @@ class WorkViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ['approve', 'reject', 'pending', 'bulk_review', 'review_logs']:
             return [IsAdminRole()]
-        if self.action in ['create', 'like', 'vote', 'my', 'update', 'partial_update', 'destroy']:
+        if self.action in ['create', 'like', 'vote', 'my', 'file', 'update', 'partial_update', 'destroy']:
             return [permissions.IsAuthenticated()]
         return [permissions.AllowAny()]
 
@@ -621,6 +625,11 @@ class WorkViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(work_type=work_type)
         if self.action == 'my':
             queryset = queryset.filter(author=self.request.user)
+        if self.action == 'file':
+            profile = getattr(self.request.user, 'profile', None)
+            is_admin = self.request.user.is_staff or getattr(profile, 'role', None) == Profile.Role.ADMIN
+            if not is_admin:
+                queryset = queryset.filter(Q(status=Work.Status.APPROVED) | Q(author=self.request.user))
         if self.action == 'pending':
             queryset = queryset.filter(status=Work.Status.PENDING)
             work_type = self.request.query_params.get('type')
@@ -756,6 +765,19 @@ class WorkViewSet(viewsets.ModelViewSet):
             reviewer=reviewer,
             action=action_name,
             reason=reject_reason if action_name == WorkReviewLog.Action.REJECT else '',
+        )
+
+    @action(detail=True, methods=['get'], url_path='file')
+    def file(self, request, pk=None):
+        work = self.get_object()
+        if work.media_type != Work.MediaType.HTML or not work.protected_attachment:
+            raise Http404('文件不存在')
+        return protected_course_file_response(
+            work.protected_attachment,
+            work.original_filename or f'{work.title}.html',
+            'application/octet-stream',
+            work.file_size,
+            attachment=True,
         )
 
     @action(detail=True, methods=['post'])
@@ -899,15 +921,19 @@ class SearchView(APIView):
             )
             .distinct()[:12]
         )
+        profile_filters = (
+            Q(name__icontains=keyword)
+            | Q(workplace__icontains=keyword)
+            | Q(mbti__icontains=keyword)
+            | Q(zodiac__icontains=keyword)
+            | Q(user__username__icontains=keyword)
+        )
+        group_match = re.fullmatch(r'(?:第\s*)?([1-6])(?:\s*组)?', keyword)
+        if group_match:
+            profile_filters |= Q(training_group=group_match.group(1))
         profiles = (
             Profile.objects.select_related('user')
-            .filter(
-                Q(name__icontains=keyword)
-                | Q(workplace__icontains=keyword)
-                | Q(mbti__icontains=keyword)
-                | Q(zodiac__icontains=keyword)
-                | Q(user__username__icontains=keyword)
-            )
+            .filter(profile_filters)
             .exclude(user__is_staff=True)
             .distinct()[:12]
         )
@@ -929,6 +955,11 @@ class UploadInitView(APIView):
         total_size = self.to_int(request.data.get('total_size'))
         total_chunks = self.to_int(request.data.get('total_chunks'))
         media_type = media_type_from_content_type(content_type)
+        max_upload_size = (
+            settings.WORK_HTML_MAX_UPLOAD_SIZE
+            if media_type == Work.MediaType.HTML
+            else settings.WORK_MAX_UPLOAD_SIZE
+        )
         camp = active_camp()
 
         if not camp:
@@ -938,7 +969,13 @@ class UploadInitView(APIView):
         if not file_name:
             return Response({'file_name': '文件名不能为空'}, status=status.HTTP_400_BAD_REQUEST)
         if not media_type:
-            return Response({'content_type': '仅支持图片、PDF、MP4、WebM 和 MOV 视频'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'content_type': '仅支持图片、PDF、HTML、MP4、WebM 和 MOV 视频'}, status=status.HTTP_400_BAD_REQUEST)
+        if media_type == Work.MediaType.HTML and not is_html_filename(file_name):
+            return Response({'file_name': 'HTML 文件扩展名必须是 .html 或 .htm'}, status=status.HTTP_400_BAD_REQUEST)
+        if media_type == Work.MediaType.HTML and (
+            not total_size or total_size <= 0 or total_size > settings.WORK_HTML_MAX_UPLOAD_SIZE
+        ):
+            return Response({'total_size': 'HTML 文件必须大于 0 且不能超过 20MB'}, status=status.HTTP_400_BAD_REQUEST)
         if not total_size or total_size <= 0 or total_size > settings.WORK_MAX_UPLOAD_SIZE:
             return Response({'total_size': '文件大小必须大于 0 且不能超过 500MB'}, status=status.HTTP_400_BAD_REQUEST)
         if not total_chunks or total_chunks <= 0:
@@ -977,7 +1014,7 @@ class UploadInitView(APIView):
             'media_type': upload.media_type,
             'total_size': upload.total_size,
             'total_chunks': upload.total_chunks,
-            'max_size': settings.WORK_MAX_UPLOAD_SIZE,
+            'max_size': max_upload_size,
             'expires_at': upload.expires_at,
         }, status=status.HTTP_201_CREATED)
 
@@ -1099,10 +1136,13 @@ class UploadCompleteView(APIView):
 
         final_name = f'{upload.upload_id}_{upload.file_name}'
         with combined_path.open('rb') as file_obj:
-            upload.file.save(final_name, File(file_obj), save=False)
+            if upload.media_type == Work.MediaType.HTML:
+                upload.protected_file.save(final_name, File(file_obj), save=False)
+            else:
+                upload.file.save(final_name, File(file_obj), save=False)
         upload.status = ChunkedUpload.Status.COMPLETED
         upload.sha256 = actual_sha256
-        upload.save(update_fields=['file', 'sha256', 'status', 'updated_at'])
+        upload.save(update_fields=['file', 'protected_file', 'sha256', 'status', 'updated_at'])
         shutil.rmtree(chunk_dir, ignore_errors=True)
         return self.response_for_upload(upload)
 
@@ -1111,6 +1151,7 @@ class UploadCompleteView(APIView):
         return Response({
             'upload_id': str(upload.upload_id),
             'file': upload.file.url if upload.file else '',
+            'protected': bool(upload.protected_file),
             'file_name': upload.file_name,
             'content_type': upload.content_type,
             'media_type': upload.media_type,

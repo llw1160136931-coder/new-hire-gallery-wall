@@ -23,6 +23,7 @@ from .models import (
     WorkReviewLog,
     normalize_tag_name,
 )
+from .work_files import is_html_filename
 
 
 MAX_WORK_IMAGES = 10
@@ -31,6 +32,7 @@ MAX_WORK_TAGS = 5
 
 ALLOWED_ATTACHMENT_TYPES = {
     'application/pdf': Work.MediaType.PDF,
+    'text/html': Work.MediaType.HTML,
     'video/mp4': Work.MediaType.VIDEO,
     'video/webm': Work.MediaType.VIDEO,
     'video/quicktime': Work.MediaType.VIDEO,
@@ -54,6 +56,15 @@ def validate_file_signature(uploaded_file, content_type):
         uploaded_file.seek(0)
         header = uploaded_file.read(32)
         uploaded_file.seek(0)
+        if content_type == 'text/html':
+            uploaded_file.seek(0)
+            sample = uploaded_file.read(64 * 1024)
+            uploaded_file.seek(0)
+            if b'\x00' in sample:
+                return False
+            text = sample.decode('utf-8-sig')
+            normalized = text.lstrip().lower()
+            return normalized.startswith('<!doctype html') or normalized.startswith('<html') or '<html' in normalized[:4096]
         if is_image_content_type(content_type):
             with Image.open(uploaded_file) as image:
                 image.verify()
@@ -65,7 +76,7 @@ def validate_file_signature(uploaded_file, content_type):
             return header.startswith(b'\x1a\x45\xdf\xa3')
         if content_type in {'video/mp4', 'video/quicktime'}:
             return b'ftyp' in header[4:16]
-    except (OSError, UnidentifiedImageError, ValueError):
+    except (OSError, UnicodeDecodeError, UnidentifiedImageError, ValueError):
         pass
     finally:
         try:
@@ -127,6 +138,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 class ProfileSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
     gender_label = serializers.CharField(source='get_gender_display', read_only=True)
+    training_group_label = serializers.CharField(source='get_training_group_display', read_only=True)
 
     class Meta:
         model = Profile
@@ -137,6 +149,8 @@ class ProfileSerializer(serializers.ModelSerializer):
             'avatar',
             'workplace',
             'mbti',
+            'training_group',
+            'training_group_label',
             'zodiac',
             'gender',
             'gender_label',
@@ -144,7 +158,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
-        read_only_fields = ['role', 'created_at', 'updated_at']
+        read_only_fields = ['role', 'training_group', 'training_group_label', 'created_at', 'updated_at']
 
 
 class CourseResourceSerializer(serializers.ModelSerializer):
@@ -279,6 +293,7 @@ class WorkSerializer(serializers.ModelSerializer):
     images = WorkImageSerializer(source='gallery_images', many=True, read_only=True)
     camp_name = serializers.CharField(source='camp.name', read_only=True)
     tags = TagListField(required=False)
+    has_attachment = serializers.SerializerMethodField()
 
     class Meta:
         model = Work
@@ -296,6 +311,7 @@ class WorkSerializer(serializers.ModelSerializer):
             'image_url',
             'images',
             'attachment',
+            'has_attachment',
             'media_type',
             'media_type_label',
             'original_filename',
@@ -329,6 +345,9 @@ class WorkSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
+
+    def get_has_attachment(self, obj):
+        return bool(obj.attachment or obj.protected_attachment)
 
     def validate(self, attrs):
         upload_id = attrs.get('upload_id')
@@ -374,8 +393,13 @@ class WorkSerializer(serializers.ModelSerializer):
             if uploaded_file.size > settings.WORK_MAX_UPLOAD_SIZE:
                 raise serializers.ValidationError({'attachment': '文件不能超过 500MB'})
             content_type = getattr(uploaded_file, 'content_type', '')
+            media_type = media_type_from_content_type(content_type)
+            if media_type == Work.MediaType.HTML:
+                if not is_html_filename(uploaded_file.name):
+                    raise serializers.ValidationError({'attachment': 'HTML 文件扩展名必须是 .html 或 .htm'})
+                raise serializers.ValidationError({'attachment': 'HTML 文件必须使用安全分片上传，请重新选择文件'})
             if not media_type_from_content_type(content_type):
-                raise serializers.ValidationError({'attachment': '仅支持图片、PDF、MP4、WebM 和 MOV 视频'})
+                raise serializers.ValidationError({'attachment': '仅支持图片、PDF、HTML、MP4、WebM 和 MOV 视频'})
             if not validate_file_signature(uploaded_file, content_type):
                 raise serializers.ValidationError({'attachment': '文件内容与声明类型不匹配或文件已损坏'})
 
@@ -447,7 +471,9 @@ class WorkSerializer(serializers.ModelSerializer):
             WorkImage.objects.create(work=instance, image=uploaded_image, order=order)
 
         if gallery_images:
+            old_protected_name = instance.protected_attachment.name if instance.protected_attachment else ''
             instance.attachment = None
+            instance.protected_attachment = None
             instance.image = None
             instance.image_url = ''
             instance.media_type = Work.MediaType.IMAGE
@@ -456,6 +482,7 @@ class WorkSerializer(serializers.ModelSerializer):
             instance.file_size = sum(getattr(uploaded_image, 'size', 0) for uploaded_image in gallery_images)
             instance.save(update_fields=[
                 'attachment',
+                'protected_attachment',
                 'image',
                 'image_url',
                 'media_type',
@@ -463,28 +490,64 @@ class WorkSerializer(serializers.ModelSerializer):
                 'content_type',
                 'file_size',
             ])
+            if old_protected_name:
+                instance._meta.get_field('protected_attachment').storage.delete(old_protected_name)
 
     def apply_attachment_metadata(self, instance, chunked_upload=None):
         if chunked_upload:
             instance.gallery_images.all().delete()
-            instance.attachment = chunked_upload.file
+            old_protected_name = instance.protected_attachment.name if instance.protected_attachment else ''
+            if chunked_upload.media_type == Work.MediaType.HTML:
+                if not chunked_upload.protected_file:
+                    raise serializers.ValidationError({'upload_id': 'HTML 安全上传文件不存在，请重新上传'})
+                instance.attachment = None
+                instance.protected_attachment = chunked_upload.protected_file.name
+                chunked_upload.protected_file = None
+                chunked_upload.save(update_fields=['protected_file'])
+            else:
+                instance.attachment = chunked_upload.file
+                instance.protected_attachment = None
             instance.media_type = chunked_upload.media_type
             instance.original_filename = chunked_upload.file_name
             instance.content_type = chunked_upload.content_type
             instance.file_size = chunked_upload.total_size
-            instance.save(update_fields=['attachment', 'media_type', 'original_filename', 'content_type', 'file_size'])
+            instance.save(update_fields=[
+                'attachment',
+                'protected_attachment',
+                'media_type',
+                'original_filename',
+                'content_type',
+                'file_size',
+            ])
+            new_protected_name = instance.protected_attachment.name if instance.protected_attachment else ''
+            if old_protected_name and old_protected_name != new_protected_name:
+                instance._meta.get_field('protected_attachment').storage.delete(old_protected_name)
             return
 
         uploaded_file = instance.attachment or instance.image
         if uploaded_file:
+            old_protected_name = instance.protected_attachment.name if instance.protected_attachment else ''
             instance.gallery_images.all().delete()
+            instance.protected_attachment = None
             content_type = getattr(uploaded_file.file, 'content_type', '') or instance.content_type
             media_type = media_type_from_content_type(content_type) or instance.media_type
             instance.media_type = media_type
             instance.original_filename = instance.original_filename or uploaded_file.name.split('/')[-1]
             instance.content_type = content_type
             instance.file_size = getattr(uploaded_file, 'size', 0) or instance.file_size
-            instance.save(update_fields=['media_type', 'original_filename', 'content_type', 'file_size'])
+            instance.save(update_fields=[
+                'protected_attachment',
+                'media_type',
+                'original_filename',
+                'content_type',
+                'file_size',
+            ])
+            if old_protected_name:
+                instance._meta.get_field('protected_attachment').storage.delete(old_protected_name)
+        elif instance.protected_attachment:
+            instance.media_type = Work.MediaType.HTML
+            instance.content_type = 'text/html'
+            instance.save(update_fields=['media_type', 'content_type'])
         elif instance.gallery_images.exists():
             instance.media_type = Work.MediaType.IMAGE
             instance.save(update_fields=['media_type'])
@@ -551,7 +614,20 @@ class LeaderboardSerializer(serializers.ModelSerializer):
 class PublicProfileSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
     gender_label = serializers.CharField(source='get_gender_display', read_only=True)
+    training_group_label = serializers.CharField(source='get_training_group_display', read_only=True)
 
     class Meta:
         model = Profile
-        fields = ['username', 'name', 'avatar', 'workplace', 'mbti', 'zodiac', 'gender', 'gender_label', 'bio']
+        fields = [
+            'username',
+            'name',
+            'avatar',
+            'workplace',
+            'mbti',
+            'training_group',
+            'training_group_label',
+            'zodiac',
+            'gender',
+            'gender_label',
+            'bio',
+        ]

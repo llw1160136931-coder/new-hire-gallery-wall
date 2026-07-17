@@ -176,6 +176,7 @@ COURSE_MATERIAL_X_ACCEL_PREFIX = os.environ.get(
     '/_protected_course_files/',
 )
 WORK_MAX_UPLOAD_SIZE = int(os.environ.get('WORK_MAX_UPLOAD_SIZE', 500 * 1024 * 1024))
+WORK_HTML_MAX_UPLOAD_SIZE = int(os.environ.get('WORK_HTML_MAX_UPLOAD_SIZE', 20 * 1024 * 1024))
 WORK_UPLOAD_CHUNK_DIR = MEDIA_ROOT / 'upload_chunks'
 WORK_MAX_UPLOAD_CHUNK_SIZE = int(os.environ.get('WORK_MAX_UPLOAD_CHUNK_SIZE', 8 * 1024 * 1024))
 WORK_MAX_UPLOAD_CHUNKS = int(os.environ.get('WORK_MAX_UPLOAD_CHUNKS', 1000))

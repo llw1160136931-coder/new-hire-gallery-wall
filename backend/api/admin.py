@@ -33,9 +33,9 @@ class TagAdmin(admin.ModelAdmin):
 
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
-    list_display = ['name', 'user', 'role', 'workplace', 'gender', 'updated_at']
-    list_filter = ['role', 'gender']
-    search_fields = ['name', 'user__username', 'workplace']
+    list_display = ['name', 'user', 'role', 'training_group', 'mbti', 'workplace', 'gender', 'updated_at']
+    list_filter = ['role', 'training_group', 'mbti', 'gender']
+    search_fields = ['name', 'user__username', 'workplace', 'training_group']
 
 
 @admin.register(Course)

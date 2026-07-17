@@ -104,7 +104,7 @@ const welcomeSteps = [
   {
     eyebrow: "第 3 站 / 分享作品",
     title: "让想法被看见",
-    text: "你可以上传图片、PDF、视频，也可以留下作品链接。通过审核后，同学们会看到你的作品、为你点赞、给你投票。",
+    text: "你可以上传图片、PDF、HTML、视频，也可以留下作品链接。通过审核后，同学们会看到你的作品、为你点赞、给你投票。",
     speech: "分享不是炫耀，是把自己的路标留给后来的人。",
     metric: "SHARE",
     mood: "share",
@@ -1058,7 +1058,7 @@ function SearchResultsPanel({ keyword, onClear, onLike, onOpenWork, onVote, resu
                     <div>
                       <h4>{profile.name}</h4>
                       <p>{profile.workplace || "未填写工作单位"} · {profile.gender_label || "未填写"} · {profile.zodiac || "未填写星座"}</p>
-                      <small>{profile.mbti || "MBTI 未填写"}</small>
+                      <small>{profile.mbti || "MBTI 未填写"} · {profile.training_group_label || "未分组"}</small>
                     </div>
                   </article>
                 ))}
@@ -1358,6 +1358,36 @@ function WorkImageLightbox({ images, title, initialIndex, onClose }) {
   );
 }
 
+function ProtectedWorkDownloadButton({ work, className = "", children }) {
+  const [downloading, setDownloading] = useState(false);
+
+  async function downloadFile(event) {
+    event.stopPropagation();
+    setDownloading(true);
+    try {
+      const result = await api.workFile(work.id);
+      const objectUrl = URL.createObjectURL(result.blob);
+      const downloadLink = document.createElement("a");
+      downloadLink.href = objectUrl;
+      downloadLink.download = work.original_filename || `${work.title}.html`;
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      downloadLink.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    } catch (downloadError) {
+      window.alert(downloadError.message || "文件下载失败，请稍后再试");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  return (
+    <button className={className} disabled={downloading} onClick={downloadFile} type="button">
+      {downloading ? "准备下载..." : children}
+    </button>
+  );
+}
+
 function WorkDetailPage({ work, onBack, onLike, onVote, actionMessage, actionError }) {
   const galleryImages = getWorkImages(work);
   const fallbackImage = getWorkImage(work);
@@ -1365,6 +1395,7 @@ function WorkDetailPage({ work, onBack, onLike, onVote, actionMessage, actionErr
   const attachment = work.attachment;
   const isVideo = work.media_type === "video" && attachment;
   const isPdf = work.media_type === "pdf" && attachment;
+  const isHtml = work.media_type === "html" && work.has_attachment;
   const showGeneratedCover = !isVideo && images.length === 0 && !isPdf;
   const hasVisualMedia = Boolean(isVideo || images.length > 0 || showGeneratedCover);
   const [lightboxIndex, setLightboxIndex] = useState(null);
@@ -1422,6 +1453,16 @@ function WorkDetailPage({ work, onBack, onLike, onVote, actionMessage, actionErr
               </span>
               <em>打开 ›</em>
             </a>
+          )}
+          {isHtml && (
+            <ProtectedWorkDownloadButton className="workAttachmentCard htmlAttachment" work={work}>
+              <span className="workAttachmentIcon">HTML</span>
+              <span className="workAttachmentInfo">
+                <strong>{work.original_filename || `${work.title}.html`}</strong>
+                <small>{work.file_size ? `${formatFileSize(work.file_size)} · ` : ""}安全下载后在本地打开</small>
+              </span>
+              <em>下载 ›</em>
+            </ProtectedWorkDownloadButton>
           )}
           <div className="workDetailLinks">
             {work.link && (
@@ -2092,6 +2133,13 @@ function AdminAttendanceView() {
   );
 }
 
+function selectedAssetTypeLabel(file) {
+  const lowerName = file.name.toLowerCase();
+  if (file.type === "text/html" || lowerName.endsWith(".html") || lowerName.endsWith(".htm")) return "HTML";
+  if (file.type === "application/pdf" || lowerName.endsWith(".pdf")) return "PDF";
+  return "视频";
+}
+
 function WorkFilePicker({ asset, images, inputKey, onRemoveAsset, onRemoveImage, onSelect }) {
   const [previews, setPreviews] = useState([]);
 
@@ -2151,7 +2199,7 @@ function WorkFilePicker({ asset, images, inputKey, onRemoveAsset, onRemoveImage,
         </>
       ) : asset ? (
         <div className="workAssetSelection">
-          <span>{asset.type === "application/pdf" || asset.name.toLowerCase().endsWith(".pdf") ? "PDF" : "视频"}</span>
+          <span>{selectedAssetTypeLabel(asset)}</span>
           <div>
             <strong>{asset.name}</strong>
             <small>{formatFileSize(asset.size)} · 已选择</small>
@@ -2172,7 +2220,7 @@ function WorkFilePicker({ asset, images, inputKey, onRemoveAsset, onRemoveImage,
           更换文件
         </label>
       )}
-      <small className="workFilePickerHelp">图片最多 10 张；PDF、MP4、WebM、MOV 只能上传 1 个，单个文件最大 500MB。</small>
+      <small className="workFilePickerHelp">图片最多 10 张；HTML 最大 20MB；PDF、MP4、WebM、MOV 最大 500MB，附件每次只能上传 1 个。</small>
     </div>
   );
 }
@@ -2241,7 +2289,7 @@ function PublishView({ camp }) {
         <div className="panelTitle">
           <span>发布作品</span>
           <h2>提交一份新人作品</h2>
-          <p>上传图片、PDF 或视频，提交后进入审核流，通过后正式出现在展示墙。</p>
+          <p>上传图片、PDF、HTML 或视频，提交后进入审核流，通过后正式出现在展示墙。</p>
         </div>
         <img src={mascotUiUpload} alt="" />
       </div>
@@ -2284,7 +2332,7 @@ function PublishView({ camp }) {
         <div className="publishFileField">
           <div className="publishFieldLabel">
             <strong>上传文件</strong>
-            <span>{form.images.length > 0 ? `${form.images.length}/${MAX_WORK_IMAGE_COUNT}` : "图片 / PDF / 视频"}</span>
+            <span>{form.images.length > 0 ? `${form.images.length}/${MAX_WORK_IMAGE_COUNT}` : "图片 / PDF / HTML / 视频"}</span>
           </div>
           <WorkFilePicker
             asset={form.asset}
@@ -2505,6 +2553,7 @@ function ReviewView() {
             <option value="all">全部文件</option>
             <option value="image">图片</option>
             <option value="pdf">PDF</option>
+            <option value="html">HTML</option>
             <option value="video">视频</option>
             <option value="link">链接</option>
           </select>
@@ -2606,6 +2655,11 @@ function ReviewView() {
                       打开附件
                     </a>
                   )}
+                  {item.media_type === "html" && item.has_attachment && (
+                    <ProtectedWorkDownloadButton className="workLink" work={item}>
+                      安全下载 HTML
+                    </ProtectedWorkDownloadButton>
+                  )}
                 </div>
               </div>
               <div className="reviewActions">
@@ -2705,6 +2759,9 @@ function ReviewPreviewModal({ work, onClose }) {
             <div className="workDetailLinks">
               {work.link && <a href={work.link} rel="noreferrer" target="_blank">打开作品链接</a>}
               {attachment && <a href={attachment} rel="noreferrer" target="_blank">打开附件</a>}
+              {work.media_type === "html" && work.has_attachment && (
+                <ProtectedWorkDownloadButton work={work}>安全下载 HTML</ProtectedWorkDownloadButton>
+              )}
             </div>
           </div>
         </div>
@@ -2899,6 +2956,13 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
             <span>工作单位</span>
             <input value={draft.workplace || ""} onChange={(event) => setDraft({ ...draft, workplace: event.target.value })} />
           </label>
+          <div className="profileEditRow profileReadOnlyRow">
+            <span>小组</span>
+            <div>
+              <strong>{draft.training_group_label || "未分组"}</strong>
+              <small>由管理员统一设置，学员不可修改</small>
+            </div>
+          </div>
           <label className="profileEditRow">
             <span>性别</span>
             <select value={draft.gender || "unknown"} onChange={(event) => setDraft({ ...draft, gender: event.target.value })}>
@@ -2970,6 +3034,7 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
             <span>{genderLabel(profile.gender)}</span>
             <span>{profile.zodiac || "未填写星座"}</span>
             <span>{profile.mbti || "MBTI"}</span>
+            <span>{profile.training_group_label || "未分组"}</span>
           </div>
           <p>{profile.bio || "热爱设计与交互，喜欢用作品解决问题，期待和大家一起成长~"}</p>
           <button onClick={startEditing} type="button">
@@ -3084,7 +3149,7 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
               <div className="publishFileField">
                 <div className="publishFieldLabel">
                   <strong>重新上传文件</strong>
-                  <span>{workDraft.images.length > 0 ? `${workDraft.images.length}/${MAX_WORK_IMAGE_COUNT}` : "图片 / PDF / 视频"}</span>
+                  <span>{workDraft.images.length > 0 ? `${workDraft.images.length}/${MAX_WORK_IMAGE_COUNT}` : "图片 / PDF / HTML / 视频"}</span>
                 </div>
                 <WorkFilePicker
                   asset={workDraft.asset}
@@ -3309,7 +3374,7 @@ function workTypeLabel(work) {
 }
 
 function mediaTypeLabel(work) {
-  return work.media_type_label || ({ image: "图片", pdf: "PDF", video: "视频", link: "链接" }[work.media_type] ?? "作品文件");
+  return work.media_type_label || ({ image: "图片", pdf: "PDF", html: "HTML", video: "视频", link: "链接" }[work.media_type] ?? "作品文件");
 }
 
 function getWorkImage(work) {
@@ -3354,7 +3419,7 @@ function formatFileSize(size) {
 
 function getReviewRisks(work) {
   const risks = [];
-  const hasFile = Boolean(work.attachment || work.image || getWorkImages(work).length > 0);
+  const hasFile = Boolean(work.has_attachment || work.attachment || work.image || getWorkImages(work).length > 0);
   const hasLink = Boolean(work.link);
 
   if (!hasFile && !hasLink) {
@@ -3368,6 +3433,9 @@ function getReviewRisks(work) {
   }
   if (work.media_type === "video" && !work.attachment) {
     risks.push("视频附件缺失");
+  }
+  if (work.media_type === "html" && !work.has_attachment) {
+    risks.push("HTML 附件缺失");
   }
   if (work.file_size > 100 * 1024 * 1024) {
     risks.push(`大文件 ${formatFileSize(work.file_size)}`);

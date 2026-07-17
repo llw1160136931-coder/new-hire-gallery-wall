@@ -1785,6 +1785,19 @@ video.workImage {
   text-decoration: none;
 }
 
+button.workLink {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+button.workLink:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
 .workDetailPage {
   display: grid;
   gap: 18px;
@@ -2163,7 +2176,8 @@ body.workImageLightboxOpen .sideNav {
   flex-wrap: wrap;
 }
 
-.workDetailLinks a {
+.workDetailLinks a,
+.workDetailLinks button {
   border-radius: 999px;
   padding: 10px 14px;
   background: #fff0f3;
@@ -2174,6 +2188,7 @@ body.workImageLightboxOpen .sideNav {
 }
 
 .workAttachmentCard {
+  width: 100%;
   margin-top: 18px;
   border: 1px solid #ffd7d7;
   border-radius: 20px;
@@ -2184,8 +2199,20 @@ body.workImageLightboxOpen .sideNav {
   align-items: center;
   background: linear-gradient(135deg, #fff7f7, #fff);
   color: var(--text);
+  font-family: inherit;
+  text-align: left;
   text-decoration: none;
   box-shadow: 0 10px 24px rgba(255, 31, 47, 0.08);
+  cursor: pointer;
+}
+
+.workAttachmentCard:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.htmlAttachment .workAttachmentIcon {
+  background: linear-gradient(135deg, #16171d, #485064);
 }
 
 .workAttachmentIcon {
@@ -4235,6 +4262,25 @@ textarea,
   resize: vertical;
   text-align: left;
   line-height: 1.6;
+}
+
+.profileReadOnlyRow > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  justify-items: end;
+  text-align: right;
+}
+
+.profileReadOnlyRow strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.profileReadOnlyRow small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .profileEditTextarea {

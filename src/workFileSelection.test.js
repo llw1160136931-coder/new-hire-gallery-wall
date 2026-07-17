@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MAX_WORK_IMAGE_COUNT, mergeSelectedWorkFiles } from "./workFileSelection.js";
+import { MAX_WORK_HTML_UPLOAD_BYTES, MAX_WORK_IMAGE_COUNT, mergeSelectedWorkFiles } from "./workFileSelection.js";
 
 function image(name, lastModified) {
   return { name, size: 1024, lastModified, type: "image/jpeg" };
@@ -46,4 +46,25 @@ test("PDF 可以被另一份 PDF 替换", () => {
 
   assert.equal(result.asset, replacement);
   assert.deepEqual(result.images, []);
+});
+
+function html(name = "demo.html", size = 4096) {
+  return { name, size, lastModified: 2, type: "text/html" };
+}
+
+test("可以单独选择 HTML 文件", () => {
+  const selected = html();
+  const result = mergeSelectedWorkFiles({ asset: null, images: [] }, [selected]);
+
+  assert.equal(result.asset, selected);
+  assert.deepEqual(result.images, []);
+});
+
+test("HTML 文件超过 20MB 时会被拒绝", () => {
+  const result = mergeSelectedWorkFiles(
+    { asset: null, images: [] },
+    [html("too-large.html", MAX_WORK_HTML_UPLOAD_BYTES + 1)],
+  );
+
+  assert.match(result.error, /HTML 文件 20MB 限制/);
 });

@@ -178,6 +178,7 @@ export const api = {
   deleteCourseResource: (id) => apiRequest(`/course-resources/${id}/`, { method: "DELETE" }),
   courseResourceFile: (id) => apiFileRequest(`/course-resources/${id}/file/`),
   works: (type) => apiRequest(type && type !== "all" ? `/works/?type=${type}` : "/works/"),
+  workFile: (id) => apiFileRequest(`/works/${id}/file/`),
   myWorks: () => apiRequest("/works/my/"),
   pendingWorks: (filters = {}) => {
     const query = new URLSearchParams();

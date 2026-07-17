@@ -15,6 +15,7 @@ from .course_files import (
     validate_course_resource_file,
 )
 from .storage import protected_course_storage
+from .work_files import protected_work_html_upload_to
 
 
 class TrainingCamp(models.Model):
@@ -102,6 +103,14 @@ class Profile(models.Model):
         ESTP = 'ESTP', 'ESTP'
         ESFP = 'ESFP', 'ESFP'
 
+    class TrainingGroup(models.TextChoices):
+        GROUP_1 = '1', '第1组'
+        GROUP_2 = '2', '第2组'
+        GROUP_3 = '3', '第3组'
+        GROUP_4 = '4', '第4组'
+        GROUP_5 = '5', '第5组'
+        GROUP_6 = '6', '第6组'
+
     class Zodiac(models.TextChoices):
         ARIES = '白羊座', '白羊座'
         TAURUS = '金牛座', '金牛座'
@@ -122,6 +131,7 @@ class Profile(models.Model):
     avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
     workplace = models.CharField(max_length=100, blank=True)
     mbti = models.CharField(max_length=4, choices=Mbti.choices, blank=True)
+    training_group = models.CharField(max_length=1, choices=TrainingGroup.choices, blank=True)
     zodiac = models.CharField(max_length=20, choices=Zodiac.choices, blank=True)
     gender = models.CharField(max_length=20, choices=Gender.choices, default=Gender.UNKNOWN)
     bio = models.TextField(blank=True)
@@ -339,6 +349,7 @@ class Work(models.Model):
         IMAGE = 'image', '图片'
         PDF = 'pdf', 'PDF'
         VIDEO = 'video', '视频'
+        HTML = 'html', 'HTML'
         LINK = 'link', '链接'
 
     camp = models.ForeignKey(TrainingCamp, on_delete=models.PROTECT, related_name='works')
@@ -348,6 +359,12 @@ class Work(models.Model):
     image = models.ImageField(upload_to='works/', blank=True, null=True)
     image_url = models.URLField(blank=True)
     attachment = models.FileField(upload_to='works/files/', blank=True, null=True)
+    protected_attachment = models.FileField(
+        upload_to=protected_work_html_upload_to,
+        storage=protected_course_storage,
+        blank=True,
+        null=True,
+    )
     media_type = models.CharField(max_length=20, choices=MediaType.choices, default=MediaType.IMAGE)
     original_filename = models.CharField(max_length=255, blank=True)
     content_type = models.CharField(max_length=120, blank=True)
@@ -437,6 +454,12 @@ class ChunkedUpload(models.Model):
     uploaded_chunks = models.JSONField(default=list)
     file = models.FileField(upload_to='works/files/', blank=True, null=True)
     expected_sha256 = models.CharField(max_length=64, blank=True)
+    protected_file = models.FileField(
+        upload_to=protected_work_html_upload_to,
+        storage=protected_course_storage,
+        blank=True,
+        null=True,
+    )
     sha256 = models.CharField(max_length=64, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.UPLOADING)
     expires_at = models.DateTimeField()

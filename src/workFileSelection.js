@@ -1,10 +1,12 @@
 export const MAX_WORK_UPLOAD_BYTES = 500 * 1024 * 1024;
+export const MAX_WORK_HTML_UPLOAD_BYTES = 20 * 1024 * 1024;
 export const MAX_WORK_IMAGE_COUNT = 10;
-export const WORK_FILE_ACCEPT = "image/*,.pdf,application/pdf,video/mp4,video/webm,video/quicktime";
+export const WORK_FILE_ACCEPT = "image/*,.pdf,.html,.htm,application/pdf,text/html,video/mp4,video/webm,video/quicktime";
 
 export function guessContentType(fileName) {
   const lower = fileName.toLowerCase();
   if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
   if (lower.endsWith(".mp4")) return "video/mp4";
   if (lower.endsWith(".webm")) return "video/webm";
   if (lower.endsWith(".mov")) return "video/quicktime";
@@ -19,6 +21,11 @@ function isImageFile(file) {
   return contentType.startsWith("image/");
 }
 
+function isHtmlFile(file) {
+  const contentType = file.type || guessContentType(file.name);
+  return contentType === "text/html";
+}
+
 export function normalizeSelectedWorkFiles(fileList) {
   const files = Array.from(fileList ?? []);
   if (files.length === 0) {
@@ -29,7 +36,7 @@ export function normalizeSelectedWorkFiles(fileList) {
   const otherFiles = files.filter((file) => !isImageFile(file));
 
   if (imageFiles.length > 0 && otherFiles.length > 0) {
-    return { error: "图片作品请只选择图片；PDF/视频请单独上传。" };
+    return { error: "图片作品请只选择图片；PDF、HTML 或视频请单独上传。" };
   }
 
   if (imageFiles.length > MAX_WORK_IMAGE_COUNT) {
@@ -37,7 +44,12 @@ export function normalizeSelectedWorkFiles(fileList) {
   }
 
   if (otherFiles.length > 1) {
-    return { error: "PDF 或视频一次只能上传 1 个文件。" };
+    return { error: "PDF、HTML 或视频一次只能上传 1 个文件。" };
+  }
+
+  const oversizedHtml = files.find((file) => isHtmlFile(file) && file.size > MAX_WORK_HTML_UPLOAD_BYTES);
+  if (oversizedHtml) {
+    return { error: `${oversizedHtml.name} 超过 HTML 文件 20MB 限制。` };
   }
 
   const oversizedFile = files.find((file) => file.size > MAX_WORK_UPLOAD_BYTES);
@@ -63,7 +75,7 @@ export function mergeSelectedWorkFiles(currentSelection, fileList) {
 
   if (selected.asset) {
     if (currentImages.length > 0) {
-      return { error: "已经选择了图片。如需上传 PDF 或视频，请先移除全部图片。" };
+      return { error: "已经选择了图片。如需上传 PDF、HTML 或视频，请先移除全部图片。" };
     }
     return { asset: selected.asset, images: [] };
   }
@@ -73,7 +85,7 @@ export function mergeSelectedWorkFiles(currentSelection, fileList) {
   }
 
   if (currentAsset) {
-    return { error: "已经选择了 PDF 或视频。如需上传图片，请先移除当前附件。" };
+    return { error: "已经选择了 PDF、HTML 或视频。如需上传图片，请先移除当前附件。" };
   }
 
   const existingKeys = new Set(currentImages.map(selectedFileKey));

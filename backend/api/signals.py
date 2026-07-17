@@ -23,7 +23,7 @@ def delete_work_image_file(sender, instance, **kwargs):
 
 @receiver(post_delete, sender=Work)
 def delete_work_files(sender, instance, **kwargs):
-    for field_name in ('image', 'attachment'):
+    for field_name in ('image', 'attachment', 'protected_attachment'):
         uploaded_file = getattr(instance, field_name, None)
         if uploaded_file:
             uploaded_file.delete(save=False)
