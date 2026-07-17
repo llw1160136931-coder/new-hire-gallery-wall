@@ -744,7 +744,7 @@ function FeedView({ camp, role }) {
             推荐
           </button>
           <button aria-pressed={filter === "training"} className={filter === "training" ? "active" : ""} onClick={() => setFilter("training")} type="button">
-            培训作品
+            培训花絮直播
           </button>
           <button aria-pressed={filter === "ai"} className={filter === "ai" ? "active" : ""} onClick={() => setFilter("ai")} type="button">
             AI 作品
