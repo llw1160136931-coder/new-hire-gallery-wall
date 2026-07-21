@@ -1929,7 +1929,7 @@ function StudentAttendancePanel() {
         <div>
           <span>今日签到</span>
           <h2>{attendance?.date || "正在读取服务器时间"}</h2>
-          <p>请在规定时间内完成签到，逾期不能补签。</p>
+          <p>学员逾期无法自行签到，如有特殊情况请联系管理员。</p>
         </div>
         <strong>{currentSlot ? `${currentSlot.label} · ${currentSlot.window}` : "当前不在签到时段"}</strong>
       </div>
@@ -2043,6 +2043,8 @@ function AdminAttendanceView() {
   const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [attendanceAction, setAttendanceAction] = useState(null);
+  const [actionSubmitting, setActionSubmitting] = useState(false);
 
   async function loadOverview(date = selectedDate, { quiet = false } = {}) {
     if (!quiet) setLoading(true);
@@ -2079,6 +2081,38 @@ function AdminAttendanceView() {
     } finally {
       await loadOverview(selectedDate, { quiet: true });
       setGenerating(false);
+    }
+  }
+
+  async function submitAttendanceAction(reason) {
+    if (!attendanceAction) return;
+    setActionSubmitting(true);
+    setMessage("");
+    setError("");
+    try {
+      if (attendanceAction.type === "makeup") {
+        await api.makeupAttendance({
+          session_id: attendanceAction.slot.session_id,
+          student_id: attendanceAction.target.student_id,
+          reason,
+        });
+      } else {
+        await api.revokeAttendanceMakeup(attendanceAction.target.record_id, reason);
+      }
+      await loadOverview(selectedDate, { quiet: true });
+      setListMode(attendanceAction.type === "makeup" ? "signed" : "absent");
+      setMessage(attendanceAction.type === "makeup" ? "补签成功，签到名单已更新。" : "补签已撤销，未签到名单已更新。");
+      setAttendanceAction(null);
+    } catch (actionError) {
+      if (actionError.status === 409) {
+        await loadOverview(selectedDate, { quiet: true });
+        setAttendanceAction(null);
+        setMessage("签到状态刚刚已发生变化，已刷新最新名单。");
+        return;
+      }
+      throw actionError;
+    } finally {
+      setActionSubmitting(false);
     }
   }
 
@@ -2167,25 +2201,199 @@ function AdminAttendanceView() {
                 text="页面每 15 秒自动刷新一次，也可以切换日期或场次查看。"
               />
             ) : (
-              <div className="attendanceTable" role="table">
-                <div className="attendanceTableRow attendanceTableHeader" role="row">
-                  <span>姓名</span>
-                  <span>账号</span>
-                  <span>{listMode === "signed" ? "签到时间" : "状态"}</span>
+              <div className="attendanceTable attendanceAdjustmentTable" role="table">
+                <div className={`attendanceTableRow attendanceTableHeader ${listMode === "signed" ? "attendanceSignedRow" : "attendanceAbsentRow"}`} role="row">
+                  <span>学员</span>
+                  {listMode === "signed" ? (
+                    <>
+                      <span>签到方式</span>
+                      <span>实际操作时间</span>
+                      <span>操作</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>状态</span>
+                      <span>操作</span>
+                    </>
+                  )}
                 </div>
-                {displayedStudents.map((student) => (
-                  <div className="attendanceTableRow" key={student.student_id} role="row">
-                    <strong>{student.name}</strong>
-                    <span>{student.username}</span>
-                    <span>{listMode === "signed" ? formatFullDate(student.signed_at) : "未签到"}</span>
-                  </div>
-                ))}
+                {displayedStudents.map((student) => {
+                  const isMakeup = student.source === "admin_makeup" || student.source_label === "管理员补签";
+                  if (listMode === "signed") {
+                    return (
+                      <div className="attendanceTableRow attendanceSignedRow" key={student.record_id || student.student_id} role="row">
+                        <div className="attendanceStudentCell">
+                          <strong>{student.name}</strong>
+                          <small>{student.username}</small>
+                        </div>
+                        <div className="attendanceSourceCell">
+                          <span className={`attendanceSourceBadge ${isMakeup ? "makeup" : "self"}`}>
+                            {student.source_label || (isMakeup ? "管理员补签" : "正常签到")}
+                          </span>
+                          {isMakeup && (
+                            <>
+                              <small>补签人：{attendanceOperatorLabel(student.recorded_by)}</small>
+                              <small title={student.makeup_reason || ""}>原因：{student.makeup_reason || "未填写"}</small>
+                            </>
+                          )}
+                        </div>
+                        <time dateTime={student.signed_at || undefined}>{formatFullDate(student.signed_at)}</time>
+                        <div className="attendanceRowActions">
+                          {student.can_revoke && (
+                            <button
+                              className="attendanceRevokeButton"
+                              onClick={() => setAttendanceAction({ type: "revoke", target: student, slot: currentData })}
+                              type="button"
+                            >
+                              撤销补签
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="attendanceTableRow attendanceAbsentRow" key={student.student_id} role="row">
+                      <div className="attendanceStudentCell">
+                        <strong>{student.name}</strong>
+                        <small>{student.username}</small>
+                      </div>
+                      <span>未签到</span>
+                      <div className="attendanceRowActions">
+                        {currentData?.can_makeup && (
+                          <button
+                            className="attendanceMakeupButton"
+                            disabled={!currentData.session_id}
+                            onClick={() => setAttendanceAction({ type: "makeup", target: student, slot: currentData })}
+                            title={!currentData.session_id ? "签到场次信息缺失，请刷新后重试" : undefined}
+                            type="button"
+                          >
+                            管理员补签
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </section>
+          {attendanceAction && (
+            <AttendanceActionModal
+              action={attendanceAction}
+              date={selectedDate}
+              onCancel={() => setAttendanceAction(null)}
+              onSubmit={submitAttendanceAction}
+              submitting={actionSubmitting}
+            />
+          )}
         </>
       )}
     </section>
+  );
+}
+
+function attendanceOperatorLabel(operator) {
+  if (!operator) return "管理员";
+  if (typeof operator === "string") return operator;
+  return operator.name || operator.username || "管理员";
+}
+
+function AttendanceActionModal({ action, date, onCancel, onSubmit, submitting }) {
+  const [reason, setReason] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const [actionError, setActionError] = useState("");
+  const isMakeup = action.type === "makeup";
+  const trimmedReason = reason.trim();
+  const reasonValid = trimmedReason.length >= 5 && trimmedReason.length <= 200;
+  const title = isMakeup ? "管理员补签" : "撤销补签";
+
+  useEffect(() => {
+    function closeOnEscape(event) {
+      if (event.key === "Escape" && !submitting) onCancel();
+    }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onCancel, submitting]);
+
+  async function submitAction(event) {
+    event.preventDefault();
+    if (!reasonValid || !confirmed || submitting) return;
+    setActionError("");
+    try {
+      await onSubmit(trimmedReason);
+    } catch (error) {
+      setActionError(error.message || `${title}失败，请稍后重试`);
+    }
+  }
+
+  return (
+    <div className="modalBackdrop attendanceActionBackdrop" onClick={() => !submitting && onCancel()}>
+      <article
+        aria-labelledby="attendance-action-title"
+        aria-modal="true"
+        className="attendanceActionModal"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <header>
+          <div>
+            <span>仅管理员可操作</span>
+            <h3 id="attendance-action-title">{title}</h3>
+          </div>
+          <button aria-label="关闭" disabled={submitting} onClick={onCancel} type="button">×</button>
+        </header>
+
+        <dl className="attendanceActionSummary">
+          <div><dt>学员</dt><dd>{action.target.name}（{action.target.username}）</dd></div>
+          <div><dt>签到日期</dt><dd>{date}</dd></div>
+          <div><dt>签到时段</dt><dd>{action.slot.label} · {action.slot.window}</dd></div>
+          {!isMakeup && <div><dt>原补签人</dt><dd>{attendanceOperatorLabel(action.target.recorded_by)}</dd></div>}
+        </dl>
+
+        <p className="attendanceActionWarning">
+          {isMakeup
+            ? "补签会记录当前真实操作时间、操作管理员和原因，不会伪造成学员在原时段自行签到。"
+            : "撤销后该学员会重新回到未签到名单，原补签和本次撤销记录仍会保留。"}
+        </p>
+
+        <form onSubmit={submitAction}>
+          <label className="attendanceReasonField">
+            {isMakeup ? "补签原因" : "撤销原因"}
+            <textarea
+              autoFocus
+              disabled={submitting}
+              maxLength="200"
+              onChange={(event) => setReason(event.target.value)}
+              placeholder={isMakeup ? "请填写补签原因（5-200 字）" : "请填写撤销原因（5-200 字）"}
+              rows="4"
+              value={reason}
+            />
+            <small className={!reasonValid && reason.length > 0 ? "invalid" : ""}>
+              已输入 {trimmedReason.length}/200 字，至少需要 5 字
+            </small>
+          </label>
+
+          <label className="attendanceActionConfirm">
+            <input
+              checked={confirmed}
+              disabled={submitting}
+              onChange={(event) => setConfirmed(event.target.checked)}
+              type="checkbox"
+            />
+            <span>我已核对学员、日期和签到时段，确认执行本次{title}。</span>
+          </label>
+
+          {actionError && <p className="errorText">{actionError}</p>}
+          <footer>
+            <button className="attendanceActionCancel" disabled={submitting} onClick={onCancel} type="button">取消</button>
+            <button className="attendanceActionSubmit" disabled={!reasonValid || !confirmed || submitting} type="submit">
+              {submitting ? "提交中..." : `确认${title}`}
+            </button>
+          </footer>
+        </form>
+      </article>
+    </div>
   );
 }
 
@@ -3401,7 +3609,7 @@ function dateInputValue(date) {
 }
 
 function attendanceStateLabel(slot) {
-  if (slot.signed) return "已签到";
+  if (slot.signed) return slot.source_label || "已签到";
   if (slot.state === "expired") return "已结束";
   if (slot.state === "upcoming") return "未开始";
   if (slot.available) return "可签到";

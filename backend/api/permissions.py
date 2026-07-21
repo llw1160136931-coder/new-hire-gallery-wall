@@ -20,3 +20,14 @@ class IsStudentRole(BasePermission):
             and not user.is_staff
             and getattr(getattr(user, 'profile', None), 'role', None) == 'student'
         )
+
+
+class IsAttendanceAdminRole(BasePermission):
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(
+            user
+            and user.is_authenticated
+            and user.is_active
+            and getattr(getattr(user, 'profile', None), 'role', None) == 'admin'
+        )

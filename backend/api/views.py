@@ -2,6 +2,7 @@ import hashlib
 import re
 import secrets
 import shutil
+from collections.abc import Mapping
 from datetime import timedelta
 from pathlib import Path
 from urllib.parse import quote
@@ -21,6 +22,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
+from .attendance_services import (
+    AttendanceServiceError,
+    grant_makeup,
+    is_camp_member,
+    revoke_makeup,
+)
 from .models import (
     AttendanceAttempt,
     AttendanceRecord,
@@ -32,6 +39,7 @@ from .models import (
     Profile,
     Tag,
     TrainingCamp,
+    TrainingCampMembership,
     Vote,
     Work,
     WorkReviewLog,
@@ -42,7 +50,7 @@ from .course_files import (
     validate_course_mind_map_file,
     validate_course_resource_file,
 )
-from .permissions import IsAdminRole, IsStudentRole
+from .permissions import IsAdminRole, IsAttendanceAdminRole, IsStudentRole
 from .serializers import (
     BulkReviewSerializer,
     CourseSerializer,
@@ -206,6 +214,8 @@ class StudentAttendanceTodayView(APIView):
         camp = active_camp()
         if not camp:
             return Response({'detail': '当前没有激活的培训期'}, status=status.HTTP_404_NOT_FOUND)
+        if not is_camp_member(request.user, camp):
+            return Response({'detail': '当前账号不属于本培训期'}, status=status.HTTP_403_FORBIDDEN)
 
         sessions = {
             item.time_slot: item
@@ -217,6 +227,7 @@ class StudentAttendanceTodayView(APIView):
                 student=request.user,
                 session__camp=camp,
                 session__date=now.date(),
+                status=AttendanceRecord.Status.ACTIVE,
             )
         }
         slot_labels = dict(AttendanceSession.TimeSlot.choices)
@@ -235,6 +246,7 @@ class StudentAttendanceTodayView(APIView):
                 'available': bool(session and state == 'active' and not record),
                 'signed': bool(record),
                 'signed_at': record.signed_at if record else None,
+                'source_label': record.get_source_display() if record else None,
             })
 
         return Response({
@@ -262,6 +274,8 @@ class StudentAttendanceCheckInView(APIView):
         camp = active_camp()
         if not camp:
             return Response({'detail': '当前没有激活的培训期'}, status=status.HTTP_404_NOT_FOUND)
+        if not is_camp_member(request.user, camp):
+            return Response({'detail': '当前账号不属于本培训期'}, status=status.HTTP_403_FORBIDDEN)
 
         session = AttendanceSession.objects.filter(
             camp=camp,
@@ -318,7 +332,7 @@ class StudentAttendanceCheckInView(APIView):
 
 
 class AdminAttendanceOverviewView(APIView):
-    permission_classes = [IsAdminRole]
+    permission_classes = [IsAttendanceAdminRole]
 
     def get(self, request):
         now = attendance_now()
@@ -328,11 +342,19 @@ class AdminAttendanceOverviewView(APIView):
         if not camp:
             return Response({'detail': '当前没有激活的培训期'}, status=status.HTTP_404_NOT_FOUND)
 
-        students = list(
-            Profile.objects.filter(role=Profile.Role.STUDENT, user__is_active=True)
-            .select_related('user')
-            .order_by('name', 'user__username')
+        memberships = list(
+            TrainingCampMembership.objects.filter(
+                camp=camp,
+                student__is_active=True,
+                student__is_staff=False,
+                student__is_superuser=False,
+                student__profile__role=Profile.Role.STUDENT,
+            )
+            .select_related('student__profile')
+            .order_by('student__profile__name', 'student__username')
         )
+        students = [membership.student for membership in memberships]
+        student_ids = {student.id for student in students}
         sessions = {
             item.time_slot: item
             for item in AttendanceSession.objects.filter(camp=camp, date=selected_date)
@@ -343,9 +365,14 @@ class AdminAttendanceOverviewView(APIView):
 
         for slot, _ in AttendanceSession.TimeSlot.choices:
             session = sessions.get(slot)
+            slot_state = attendance_slot_state(selected_date, slot, now)
             records = list(
-                AttendanceRecord.objects.filter(session=session)
-                .select_related('student__profile')
+                AttendanceRecord.objects.filter(
+                    session=session,
+                    student_id__in=student_ids,
+                    status=AttendanceRecord.Status.ACTIVE,
+                )
+                .select_related('student__profile', 'recorded_by__profile')
                 .order_by('signed_at')
             ) if session else []
             signed_ids = {record.student_id for record in records}
@@ -354,8 +381,9 @@ class AdminAttendanceOverviewView(APIView):
                 'slot': slot,
                 'label': slot_labels[slot],
                 'window': attendance_window_label(slot),
-                'state': attendance_slot_state(selected_date, slot, now),
+                'state': slot_state,
                 'generated': bool(session),
+                'can_makeup': bool(session and slot_state == 'expired'),
                 'code': session.code if session else None,
                 'created_at': session.created_at if session else None,
                 'created_by': (
@@ -367,17 +395,42 @@ class AdminAttendanceOverviewView(APIView):
                 'absent_count': max(len(students) - len(records), 0) if session else None,
                 'records': [
                     {
+                        'record_id': record.id,
                         'student_id': record.student_id,
                         'username': record.student.username,
                         'name': record.student.profile.name,
                         'signed_at': record.signed_at,
+                        'source': record.source,
+                        'source_label': record.get_source_display(),
+                        'recorded_by': (
+                            {
+                                'username': record.recorded_by.username,
+                                'name': (
+                                    record.recorded_by.profile.name
+                                    if hasattr(record.recorded_by, 'profile')
+                                    else ''
+                                ),
+                            }
+                            if record.source == AttendanceRecord.Source.ADMIN_MAKEUP
+                            and record.recorded_by
+                            else None
+                        ),
+                        'makeup_reason': (
+                            record.makeup_reason
+                            if record.source == AttendanceRecord.Source.ADMIN_MAKEUP
+                            else ''
+                        ),
+                        'can_revoke': (
+                            record.source == AttendanceRecord.Source.ADMIN_MAKEUP
+                            and record.status == AttendanceRecord.Status.ACTIVE
+                        ),
                     }
                     for record in records
                 ],
                 'absent_students': [
-                    {'student_id': profile.user_id, 'username': profile.user.username, 'name': profile.name}
-                    for profile in students
-                    if profile.user_id not in signed_ids
+                    {'student_id': student.id, 'username': student.username, 'name': student.profile.name}
+                    for student in students
+                    if student.id not in signed_ids
                 ] if session else [],
             })
 
@@ -391,7 +444,7 @@ class AdminAttendanceOverviewView(APIView):
 
 
 class AdminAttendanceGenerateView(APIView):
-    permission_classes = [IsAdminRole]
+    permission_classes = [IsAttendanceAdminRole]
     throttle_scope = 'attendance'
 
     def post(self, request):
@@ -454,6 +507,80 @@ class AdminAttendanceGenerateView(APIView):
             }, status=status.HTTP_201_CREATED)
 
         return Response({'detail': '签到码生成失败，请稍后重试'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+class StrictAttendanceInputSerializer(serializers.Serializer):
+    def to_internal_value(self, data):
+        if isinstance(data, Mapping):
+            unknown_fields = set(data.keys()) - set(self.fields)
+            if unknown_fields:
+                field_names = ', '.join(sorted(unknown_fields))
+                raise serializers.ValidationError({
+                    'detail': f'包含不允许的字段：{field_names}',
+                })
+        return super().to_internal_value(data)
+
+
+class AttendanceMakeupInputSerializer(StrictAttendanceInputSerializer):
+    session_id = serializers.IntegerField(min_value=1)
+    student_id = serializers.IntegerField(min_value=1)
+    reason = serializers.CharField(min_length=5, max_length=200, trim_whitespace=True)
+
+
+class AttendanceRevokeInputSerializer(StrictAttendanceInputSerializer):
+    reason = serializers.CharField(min_length=5, max_length=200, trim_whitespace=True)
+
+
+class AdminAttendanceMakeupView(APIView):
+    permission_classes = [IsAttendanceAdminRole]
+    throttle_scope = 'attendance_admin'
+
+    def post(self, request):
+        serializer = AttendanceMakeupInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            record, reactivated = grant_makeup(
+                actor=request.user,
+                now=attendance_now(),
+                **serializer.validated_data,
+            )
+        except AttendanceServiceError as exc:
+            return Response({'detail': exc.detail}, status=exc.status_code)
+
+        return Response({
+            'detail': '补签成功',
+            'record_id': record.id,
+            'student_id': record.student_id,
+            'signed_at': record.signed_at,
+            'source': record.source,
+            'source_label': record.get_source_display(),
+            'reactivated': reactivated,
+        }, status=status.HTTP_201_CREATED)
+
+
+class AdminAttendanceMakeupRevokeView(APIView):
+    permission_classes = [IsAttendanceAdminRole]
+    throttle_scope = 'attendance_admin'
+
+    def post(self, request, record_id):
+        serializer = AttendanceRevokeInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            record = revoke_makeup(
+                record_id=record_id,
+                actor=request.user,
+                now=attendance_now(),
+                **serializer.validated_data,
+            )
+        except AttendanceServiceError as exc:
+            return Response({'detail': exc.detail}, status=exc.status_code)
+
+        return Response({
+            'detail': '补签已撤销',
+            'record_id': record.id,
+            'status': record.status,
+            'revoked_at': record.revoked_at,
+        })
 
 
 class CourseViewSet(viewsets.ReadOnlyModelViewSet):

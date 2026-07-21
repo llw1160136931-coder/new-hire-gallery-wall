@@ -9,7 +9,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from openpyxl import load_workbook
 
-from api.models import Profile
+from api.models import Profile, TrainingCamp, TrainingCampMembership
 
 
 REQUIRED_HEADERS = {
@@ -108,6 +108,10 @@ class Command(BaseCommand):
             formatted = '\n'.join(f'- 第 {row_number} 行：{message}' for row_number, message in errors)
             raise CommandError(f'导入检查失败，共 {len(errors)} 个问题：\n{formatted}')
 
+        camp = TrainingCamp.get_active()
+        if not camp:
+            raise CommandError('当前没有激活的培训期，无法建立学员归属关系。')
+
         new_count = sum(row.username not in existing_users for row in rows)
         update_count = len(rows) - new_count
         if ignored_headers:
@@ -133,7 +137,7 @@ class Command(BaseCommand):
 
         with transaction.atomic():
             for row in rows:
-                self._save_student(row, existing_users.get(row.username))
+                self._save_student(row, existing_users.get(row.username), camp)
 
         self.stdout.write(
             self.style.SUCCESS(
@@ -221,7 +225,7 @@ class Command(BaseCommand):
         profile_role = user.profile.role if hasattr(user, 'profile') else None
         return user.is_staff or user.is_superuser or profile_role == Profile.Role.ADMIN
 
-    def _save_student(self, row, existing_user):
+    def _save_student(self, row, existing_user, camp):
         user = existing_user or User(username=row.username)
         user.is_active = True
         user.set_password(row.password)
@@ -235,6 +239,7 @@ class Command(BaseCommand):
         profile.workplace = row.workplace
         profile.gender = row.gender
         profile.save()
+        TrainingCampMembership.objects.get_or_create(camp=camp, student=user)
 
     def _value_at(self, cells, index):
         if index is None or index >= len(cells):

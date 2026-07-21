@@ -170,6 +170,9 @@ export const api = {
   attendanceCheckIn: (code) => apiRequest("/attendance/check-in/", { method: "POST", body: { code } }),
   adminAttendance: (date) => apiRequest(`/attendance/admin/overview/${date ? `?date=${encodeURIComponent(date)}` : ""}`),
   generateAttendance: () => apiRequest("/attendance/admin/generate/", { method: "POST", body: {} }),
+  makeupAttendance: (payload) => apiRequest("/attendance/admin/makeups/", { method: "POST", body: payload }),
+  revokeAttendanceMakeup: (recordId, reason) =>
+    apiRequest(`/attendance/admin/makeups/${recordId}/revoke/`, { method: "POST", body: { reason } }),
   courses: (date) => apiRequest(date ? `/courses/?date=${date}` : "/courses/"),
   uploadCourseMaterials: (id, formData) =>
     apiRequest(`/courses/${id}/materials/`, { method: "POST", body: formData }),

@@ -20,6 +20,7 @@ from api.models import (
     Profile,
     Tag,
     TrainingCamp,
+    TrainingCampMembership,
     Work,
     normalize_tag_name,
 )
@@ -331,6 +332,14 @@ class Command(BaseCommand):
                 profile.training_group = str(((index - 1) % 6) + 1)
                 profile.save(update_fields=['name', 'role', 'training_group', 'updated_at'])
                 users.append(user)
+
+            TrainingCampMembership.objects.bulk_create(
+                [
+                    TrainingCampMembership(camp=camp, student=user)
+                    for user in users
+                ],
+                ignore_conflicts=True,
+            )
 
             tags = {
                 name: Tag.objects.create(name=name)

@@ -74,6 +74,32 @@ class TrainingCamp(models.Model):
         return cls.objects.filter(is_active=True).first()
 
 
+class TrainingCampMembership(models.Model):
+    camp = models.ForeignKey(
+        TrainingCamp,
+        on_delete=models.CASCADE,
+        related_name='memberships',
+    )
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='training_camp_memberships',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['camp_id', 'student_id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['camp', 'student'],
+                name='unique_training_camp_membership',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.camp} - {self.student.username}'
+
+
 class Profile(models.Model):
     class Role(models.TextChoices):
         STUDENT = 'student', '学员'
@@ -265,11 +291,58 @@ class AttendanceSession(models.Model):
 
 
 class AttendanceRecord(models.Model):
+    class Source(models.TextChoices):
+        CODE = 'code', '正常签到'
+        ADMIN_MAKEUP = 'admin_makeup', '管理员补签'
+
+    class Status(models.TextChoices):
+        ACTIVE = 'active', '有效'
+        REVOKED = 'revoked', '已撤销'
+
     session = models.ForeignKey(AttendanceSession, on_delete=models.CASCADE, related_name='records')
     student = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='attendance_records',
+    )
+    source = models.CharField(
+        max_length=20,
+        choices=Source.choices,
+        default=Source.CODE,
+        db_default=Source.CODE,
+    )
+    recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='recorded_attendance_makeups',
+        blank=True,
+        null=True,
+    )
+    makeup_reason = models.CharField(
+        max_length=200,
+        blank=True,
+        default='',
+        db_default='',
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+        db_default=Status.ACTIVE,
+    )
+    revoked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='revoked_attendance_makeups',
+        blank=True,
+        null=True,
+    )
+    revoked_at = models.DateTimeField(blank=True, null=True)
+    revoke_reason = models.CharField(
+        max_length=200,
+        blank=True,
+        default='',
+        db_default='',
     )
     signed_at = models.DateTimeField(auto_now_add=True)
 
@@ -280,10 +353,79 @@ class AttendanceRecord(models.Model):
                 fields=['session', 'student'],
                 name='unique_student_attendance_record',
             ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        source='code',
+                        recorded_by__isnull=True,
+                        makeup_reason='',
+                    )
+                    | (
+                        Q(source='admin_makeup', recorded_by__isnull=False)
+                        & ~Q(makeup_reason='')
+                    )
+                ),
+                name='attendance_record_source_fields_valid',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        status='active',
+                        revoked_by__isnull=True,
+                        revoked_at__isnull=True,
+                        revoke_reason='',
+                    )
+                    | (
+                        Q(
+                            status='revoked',
+                            source='admin_makeup',
+                            revoked_by__isnull=False,
+                            revoked_at__isnull=False,
+                        )
+                        & ~Q(revoke_reason='')
+                    )
+                ),
+                name='attendance_record_status_fields_valid',
+            ),
         ]
 
     def __str__(self):
         return f'{self.session} - {self.student.username}'
+
+
+class AttendanceAuditLog(models.Model):
+    class Action(models.TextChoices):
+        GRANT = 'grant', '管理员补签'
+        REVOKE = 'revoke', '撤销补签'
+
+    record = models.ForeignKey(
+        AttendanceRecord,
+        on_delete=models.PROTECT,
+        related_name='audit_logs',
+    )
+    action = models.CharField(max_length=20, choices=Action.choices)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name='attendance_audit_logs',
+        blank=True,
+        null=True,
+    )
+    reason = models.CharField(max_length=200)
+    actor_username = models.CharField(max_length=150)
+    actor_name = models.CharField(max_length=50, blank=True)
+    student_username = models.CharField(max_length=150)
+    student_name = models.CharField(max_length=50)
+    camp_id_snapshot = models.PositiveBigIntegerField()
+    session_date = models.DateField()
+    time_slot = models.CharField(max_length=20, choices=AttendanceSession.TimeSlot.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+
+    def __str__(self):
+        return f'{self.get_action_display()} - {self.student_username} - {self.session_date}'
 
 
 class AttendanceAttempt(models.Model):

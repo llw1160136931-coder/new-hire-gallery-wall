@@ -3,7 +3,15 @@ from datetime import date
 from django.contrib.auth.models import User
 from django.core.management.base import BaseCommand
 
-from api.models import Course, Profile, Tag, TrainingCamp, Work, normalize_tag_name
+from api.models import (
+    Course,
+    Profile,
+    Tag,
+    TrainingCamp,
+    TrainingCampMembership,
+    Work,
+    normalize_tag_name,
+)
 from api.training_schedule import COURSE_SCHEDULE
 
 
@@ -11,9 +19,10 @@ class Command(BaseCommand):
     help = 'Seed demo users, courses, and works for local development.'
 
     def handle(self, *args, **options):
+        camp = self.ensure_camp()
         admin = self.ensure_user('admin', 'Admin12345', '审核管理员', Profile.Role.ADMIN, is_staff=True)
         student = self.ensure_user('student', 'Student12345', '新员工', Profile.Role.STUDENT)
-        camp = self.ensure_camp()
+        TrainingCampMembership.objects.get_or_create(camp=camp, student=student)
         self.seed_courses(camp)
         self.seed_works(camp, student, admin)
         self.stdout.write(self.style.SUCCESS('Demo data ready.'))

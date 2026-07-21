@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from .models import (
+    AttendanceAuditLog,
     AttendanceAttempt,
     AttendanceRecord,
     AttendanceSession,
@@ -11,6 +12,7 @@ from .models import (
     Profile,
     Tag,
     TrainingCamp,
+    TrainingCampMembership,
     Vote,
     Work,
     WorkImage,
@@ -23,6 +25,23 @@ class TrainingCampAdmin(admin.ModelAdmin):
     list_display = ['name', 'start_date', 'end_date', 'vote_limit', 'is_active']
     list_filter = ['is_active', 'start_date']
     search_fields = ['name', 'slug']
+
+
+@admin.register(TrainingCampMembership)
+class TrainingCampMembershipAdmin(admin.ModelAdmin):
+    list_display = ['camp', 'student', 'created_at']
+    list_filter = ['camp']
+    search_fields = ['student__username', 'student__profile__name']
+    readonly_fields = ['camp', 'student', 'created_at']
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(Tag)
@@ -91,10 +110,59 @@ class AttendanceSessionAdmin(admin.ModelAdmin):
 
 @admin.register(AttendanceRecord)
 class AttendanceRecordAdmin(admin.ModelAdmin):
-    list_display = ['session', 'student', 'signed_at']
-    list_filter = ['session__date', 'session__time_slot']
+    list_display = ['session', 'student', 'source', 'status', 'recorded_by', 'signed_at']
+    list_filter = ['session__date', 'session__time_slot', 'source', 'status']
     search_fields = ['student__username', 'student__profile__name']
-    readonly_fields = ['session', 'student', 'signed_at']
+    readonly_fields = [
+        'session',
+        'student',
+        'source',
+        'recorded_by',
+        'makeup_reason',
+        'status',
+        'revoked_by',
+        'revoked_at',
+        'revoke_reason',
+        'signed_at',
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(AttendanceAuditLog)
+class AttendanceAuditLogAdmin(admin.ModelAdmin):
+    list_display = [
+        'record',
+        'action',
+        'actor',
+        'student_username',
+        'session_date',
+        'time_slot',
+        'created_at',
+    ]
+    list_filter = ['action', 'session_date', 'time_slot']
+    search_fields = ['student_username', 'student_name', 'actor_username', 'actor_name', 'reason']
+    readonly_fields = [
+        'record',
+        'action',
+        'actor',
+        'reason',
+        'actor_username',
+        'actor_name',
+        'student_username',
+        'student_name',
+        'camp_id_snapshot',
+        'session_date',
+        'time_slot',
+        'created_at',
+    ]
 
     def has_add_permission(self, request):
         return False

@@ -230,6 +230,7 @@ REST_FRAMEWORK = {
         'upload': os.environ.get('DRF_UPLOAD_THROTTLE_RATE', '180/min'),
         'search': os.environ.get('DRF_SEARCH_THROTTLE_RATE', '60/min'),
         'attendance': os.environ.get('DRF_ATTENDANCE_THROTTLE_RATE', '10/min'),
+        'attendance_admin': os.environ.get('DRF_ATTENDANCE_ADMIN_THROTTLE_RATE', '30/min'),
     },
 }
 

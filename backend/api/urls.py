@@ -4,6 +4,8 @@ from rest_framework_simplejwt.views import TokenVerifyView
 
 from .views import (
     AdminAttendanceGenerateView,
+    AdminAttendanceMakeupRevokeView,
+    AdminAttendanceMakeupView,
     AdminAttendanceOverviewView,
     CourseViewSet,
     CourseResourceViewSet,
@@ -39,6 +41,12 @@ urlpatterns = [
     path('attendance/check-in/', StudentAttendanceCheckInView.as_view(), name='attendance-check-in'),
     path('attendance/admin/overview/', AdminAttendanceOverviewView.as_view(), name='attendance-admin-overview'),
     path('attendance/admin/generate/', AdminAttendanceGenerateView.as_view(), name='attendance-admin-generate'),
+    path('attendance/admin/makeups/', AdminAttendanceMakeupView.as_view(), name='attendance-admin-makeup'),
+    path(
+        'attendance/admin/makeups/<int:record_id>/revoke/',
+        AdminAttendanceMakeupRevokeView.as_view(),
+        name='attendance-admin-makeup-revoke',
+    ),
     path('camps/current/', CurrentTrainingCampView.as_view(), name='current-training-camp'),
     path('loadtest/identity/', LoadTestIdentityView.as_view(), name='loadtest-identity'),
     path('leaderboard/', LeaderboardView.as_view(), name='leaderboard'),

@@ -8,7 +8,7 @@ from django.core.management.base import CommandError
 from django.test import TestCase
 from openpyxl import Workbook
 
-from .models import Profile
+from .models import Profile, TrainingCamp, TrainingCampMembership
 
 
 class ImportStudentsCommandTests(TestCase):
@@ -58,6 +58,12 @@ class ImportStudentsCommandTests(TestCase):
         self.assertEqual(user.profile.workplace, '示例科技公司')
         self.assertEqual(user.profile.gender, Profile.Gender.FEMALE)
         self.assertEqual(user.profile.role, Profile.Role.STUDENT)
+        self.assertTrue(
+            TrainingCampMembership.objects.filter(
+                camp=TrainingCamp.get_active(),
+                student=user,
+            ).exists()
+        )
 
     def test_duplicate_username_in_excel_stops_entire_import(self):
         path = self.make_workbook([
