@@ -193,8 +193,20 @@ class AttendanceAttemptAdmin(admin.ModelAdmin):
 
 @admin.register(Work)
 class WorkAdmin(admin.ModelAdmin):
-    list_display = ['title', 'camp', 'author', 'work_type', 'media_type', 'status', 'file_size', 'created_at', 'reviewed_at']
-    list_filter = ['camp', 'work_type', 'media_type', 'status']
+    list_display = [
+        'title',
+        'camp',
+        'author',
+        'work_type',
+        'media_type',
+        'status',
+        'include_in_leaderboard',
+        'file_size',
+        'created_at',
+        'reviewed_at',
+    ]
+    list_filter = ['camp', 'work_type', 'media_type', 'status', 'include_in_leaderboard']
+    list_editable = ['include_in_leaderboard']
     search_fields = ['title', 'description', 'author__username', 'author__profile__name']
     filter_horizontal = ['tags']
     inlines = []

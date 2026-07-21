@@ -60,6 +60,7 @@ from .serializers import (
     PublicProfileSerializer,
     ReviewSerializer,
     TrainingCampSerializer,
+    WorkClassificationSerializer,
     WorkSerializer,
     WorkReviewLogSerializer,
     media_type_from_content_type,
@@ -752,7 +753,7 @@ class WorkViewSet(viewsets.ModelViewSet):
     parser_classes = [parsers.JSONParser, parsers.FormParser, parsers.MultiPartParser]
 
     def get_permissions(self):
-        if self.action in ['approve', 'reject', 'pending', 'bulk_review', 'review_logs']:
+        if self.action in ['approve', 'reject', 'pending', 'bulk_review', 'review_logs', 'classification']:
             return [IsAdminRole()]
         if self.action in ['create', 'like', 'vote', 'my', 'file', 'update', 'partial_update', 'destroy']:
             return [permissions.IsAuthenticated()]
@@ -846,6 +847,15 @@ class WorkViewSet(viewsets.ModelViewSet):
     def pending(self, request):
         serializer = self.get_serializer(self.get_queryset(), many=True)
         return Response(serializer.data)
+
+    @action(detail=True, methods=['patch'], url_path='classification')
+    def classification(self, request, pk=None):
+        work = self.get_object()
+        serializer = WorkClassificationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        work.work_type = serializer.validated_data['work_type']
+        work.save(update_fields=['work_type', 'updated_at'])
+        return Response(self.get_serializer(work).data)
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
@@ -1025,7 +1035,11 @@ class LeaderboardView(APIView):
         if not camp:
             return Response([])
         queryset = (
-            Work.objects.filter(status=Work.Status.APPROVED, camp=camp)
+            Work.objects.filter(
+                status=Work.Status.APPROVED,
+                camp=camp,
+                include_in_leaderboard=True,
+            )
             .select_related('author__profile')
             .annotate(like_count=Count('likes', distinct=True), vote_count=Count('votes', distinct=True))
             .annotate(score=F('like_count') + F('vote_count'))

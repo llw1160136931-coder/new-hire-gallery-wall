@@ -68,6 +68,11 @@ const zodiacOptions = [
 ];
 
 const fallbackTones = ["blue", "violet", "orange"];
+const WORK_TYPE_OPTIONS = [
+  { value: "training", label: "培训作品" },
+  { value: "ai", label: "AI 作品" },
+  { value: "ai_competition", label: "AI 比赛作品" },
+];
 const CHUNK_SIZE = 5 * 1024 * 1024;
 const MAX_COURSE_RESOURCE_COUNT = 10;
 const COURSE_MIND_MAP_ACCEPT = ".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp";
@@ -452,6 +457,7 @@ function FeedView({ camp, role }) {
   const [leaderboard, setLeaderboard] = useState([]);
   const [courses, setCourses] = useState([]);
   const [selectedWork, setSelectedWork] = useState(null);
+  const [openingRankedWorkId, setOpeningRankedWorkId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [coursesLoading, setCoursesLoading] = useState(true);
   const [error, setError] = useState("");
@@ -531,9 +537,7 @@ function FeedView({ camp, role }) {
     }
   }, [coursesLoading, courses]);
 
-  const rankedWorks = leaderboard.length
-    ? leaderboard
-    : [...works].sort((a, b) => scoreWork(b) - scoreWork(a)).slice(0, 5);
+  const rankedWorks = leaderboard;
   const totalVotes = rankedWorks.reduce((sum, work) => sum + (work.vote_count ?? 0), 0);
 
   async function likeWork(id) {
@@ -604,6 +608,19 @@ function FeedView({ camp, role }) {
       return;
     }
     await voteWork(selectedWork.id);
+  }
+
+  async function openRankedWork(work) {
+    setOpeningRankedWorkId(work.id);
+    setActionError("");
+    setActionMessage("");
+    try {
+      setSelectedWork(await api.work(work.id));
+    } catch (detailError) {
+      setActionError(detailError.message || "作品详情加载失败，请稍后重试");
+    } finally {
+      setOpeningRankedWorkId(null);
+    }
   }
 
   if (selectedWork) {
@@ -726,14 +743,21 @@ function FeedView({ camp, role }) {
         </div>
         <div className="rankList">
           {rankedWorks.map((work, index) => (
-            <article className="rankItem" key={work.id}>
+            <button
+              aria-label={`查看 ${work.title} 详情`}
+              className="rankItem"
+              disabled={openingRankedWorkId !== null}
+              key={work.id}
+              onClick={() => openRankedWork(work)}
+              type="button"
+            >
               <strong>{index + 1}</strong>
               <div>
                 <h3>{work.title}</h3>
                 <p>{work.author_name} · {workTypeLabel(work)}</p>
               </div>
-              <span>{work.like_count ?? 0}赞 / {work.vote_count ?? 0}票</span>
-            </article>
+              <span>{openingRankedWorkId === work.id ? "加载中..." : `${work.like_count ?? 0}赞 / ${work.vote_count ?? 0}票`}</span>
+            </button>
           ))}
         </div>
         <div className="feedStats">
@@ -752,6 +776,14 @@ function FeedView({ camp, role }) {
           </button>
           <button aria-pressed={filter === "ai"} className={filter === "ai" ? "active" : ""} onClick={() => setFilter("ai")} type="button">
             AI 作品
+          </button>
+          <button
+            aria-pressed={filter === "ai_competition"}
+            className={filter === "ai_competition" ? "active" : ""}
+            onClick={() => setFilter("ai_competition")}
+            type="button"
+          >
+            AI 比赛作品
           </button>
         </div>
         <span className="feedWorkCount"><strong>{works.length}</strong> 个作品</span>
@@ -801,6 +833,7 @@ function WorksGalleryView({ role }) {
   const [actionMessage, setActionMessage] = useState("");
   const [actionError, setActionError] = useState("");
   const [deletingWorkId, setDeletingWorkId] = useState(null);
+  const [classifyingWorkId, setClassifyingWorkId] = useState(null);
 
   async function loadWorks() {
     setLoading(true);
@@ -883,6 +916,28 @@ function WorksGalleryView({ role }) {
     }
   }
 
+  async function classifyWork(work, workType) {
+    if (work.work_type === workType) {
+      return;
+    }
+    setClassifyingWorkId(work.id);
+    setActionMessage("");
+    setActionError("");
+    try {
+      const nextWork = await api.classifyWork(work.id, workType);
+      if (filter !== "all" && nextWork.work_type !== filter) {
+        setWorks((current) => current.filter((item) => item.id !== nextWork.id));
+      } else {
+        syncWork(nextWork);
+      }
+      setActionMessage(`“${nextWork.title}”已归类为${workTypeLabel(nextWork)}。`);
+    } catch (classificationError) {
+      setActionError(classificationError.message || "作品分类失败，请稍后重试");
+    } finally {
+      setClassifyingWorkId(null);
+    }
+  }
+
   if (selectedWork) {
     return (
       <WorkDetailPage
@@ -912,6 +967,7 @@ function WorksGalleryView({ role }) {
           <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")} type="button">全部</button>
           <button className={filter === "training" ? "active" : ""} onClick={() => setFilter("training")} type="button">培训作品</button>
           <button className={filter === "ai" ? "active" : ""} onClick={() => setFilter("ai")} type="button">AI 作品</button>
+          <button className={filter === "ai_competition" ? "active" : ""} onClick={() => setFilter("ai_competition")} type="button">AI 比赛作品</button>
         </div>
         <label className="worksGallerySearch">
           <span>⌕</span>
@@ -937,12 +993,14 @@ function WorksGalleryView({ role }) {
         <div className="worksWaterfall">
           {visibleWorks.map((work, index) => (
             <GalleryWorkCard
+              classifying={classifyingWorkId === work.id}
+              deleting={deletingWorkId === work.id}
               index={index}
               key={work.id}
-              deleting={deletingWorkId === work.id}
+              onClassify={role === "admin" ? (workType) => classifyWork(work, workType) : null}
+              onDelete={role === "admin" ? () => deleteWork(work) : null}
               onLike={() => likeWork(work)}
               onOpen={() => setSelectedWork(work)}
-              onDelete={role === "admin" ? () => deleteWork(work) : null}
               work={work}
             />
           ))}
@@ -953,7 +1011,7 @@ function WorksGalleryView({ role }) {
   );
 }
 
-function GalleryWorkCard({ work, index, deleting, onDelete, onLike, onOpen }) {
+function GalleryWorkCard({ work, index, classifying, deleting, onClassify, onDelete, onLike, onOpen }) {
   const images = getWorkImages(work);
   const image = images[0] || getWorkImage(work);
   const isVideo = work.media_type === "video" && work.attachment;
@@ -999,6 +1057,21 @@ function GalleryWorkCard({ work, index, deleting, onDelete, onLike, onOpen }) {
             ♡ <span>{work.like_count ?? 0}</span>
           </button>
         </div>
+        {onClassify && (
+          <label className="galleryClassification">
+            <span>管理员分类</span>
+            <select
+              aria-label={`设置 ${work.title} 的作品分类`}
+              disabled={classifying}
+              onChange={(event) => onClassify(event.target.value)}
+              value={work.work_type}
+            >
+              {WORK_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+        )}
         {onDelete && (
           <button className="galleryDelete" disabled={deleting} onClick={onDelete} type="button">
             {deleting ? "删除中..." : "管理员删除"}
@@ -2571,8 +2644,9 @@ function PublishView({ camp }) {
         <label>
           作品类型
           <select value={form.work_type} onChange={(event) => updateField("work_type", event.target.value)}>
-            <option value="training">培训作品</option>
-            <option value="ai">AI 作品</option>
+            {WORK_TYPE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
           </select>
         </label>
         <label>
@@ -2642,6 +2716,7 @@ function ReviewView() {
   const [rejectReason, setRejectReason] = useState("");
   const [previewWork, setPreviewWork] = useState(null);
   const [processing, setProcessing] = useState(false);
+  const [classifyingWorkId, setClassifyingWorkId] = useState(null);
 
   async function loadPending() {
     setLoading(true);
@@ -2680,6 +2755,29 @@ function ReviewView() {
 
   async function approve(id) {
     await reviewSingle(async () => api.approveWork(id), "已通过 1 个作品。");
+  }
+
+  async function classifyPendingWork(work, workType) {
+    if (work.work_type === workType) {
+      return;
+    }
+    setClassifyingWorkId(work.id);
+    setError("");
+    setMessage("");
+    try {
+      const nextWork = await api.classifyWork(work.id, workType);
+      const remainsVisible = filters.type === "all" || filters.type === nextWork.work_type;
+      setItems((current) => remainsVisible
+        ? current.map((item) => (item.id === nextWork.id ? nextWork : item))
+        : current.filter((item) => item.id !== nextWork.id));
+      setSelectedIds((current) => remainsVisible ? current : current.filter((id) => id !== nextWork.id));
+      setPreviewWork((current) => (current?.id === nextWork.id ? nextWork : current));
+      setMessage(`“${nextWork.title}”已归类为${workTypeLabel(nextWork)}。`);
+    } catch (classificationError) {
+      setError(classificationError.message || "作品分类失败");
+    } finally {
+      setClassifyingWorkId(null);
+    }
   }
 
   async function deletePendingWork(work) {
@@ -2779,6 +2877,7 @@ function ReviewView() {
   const selectedItems = items.filter((item) => selectedIds.includes(item.id));
   const aiCount = items.filter((item) => item.work_type === "ai").length;
   const trainingCount = items.filter((item) => item.work_type === "training").length;
+  const competitionCount = items.filter((item) => item.work_type === "ai_competition").length;
   const riskyCount = items.filter((item) => getReviewRisks(item).length > 0).length;
 
   return (
@@ -2796,7 +2895,7 @@ function ReviewView() {
         <strong>{items.length}<span>待处理</span></strong>
         <strong>{selectedIds.length}<span>已选中</span></strong>
         <strong>{riskyCount}<span>需关注</span></strong>
-        <strong>{aiCount}/{trainingCount}<span>AI/培训</span></strong>
+        <strong>{aiCount}/{trainingCount}/{competitionCount}<span>AI/培训/比赛</span></strong>
       </div>
 
       <div className="reviewToolbar">
@@ -2806,6 +2905,7 @@ function ReviewView() {
             <option value="all">全部类型</option>
             <option value="ai">AI 作品</option>
             <option value="training">培训作品</option>
+            <option value="ai_competition">AI 比赛作品</option>
           </select>
         </label>
         <label>
@@ -2927,10 +3027,23 @@ function ReviewView() {
                 </div>
               </div>
               <div className="reviewActions">
-                <button disabled={processing} onClick={() => approve(item.id)} type="button">通过</button>
-                <button disabled={processing} onClick={() => openReject([item.id])} type="button">打回</button>
+                <label className="reviewClassification">
+                  <span>作品分类</span>
+                  <select
+                    aria-label={`设置 ${item.title} 的作品分类`}
+                    disabled={processing || classifyingWorkId === item.id}
+                    onChange={(event) => classifyPendingWork(item, event.target.value)}
+                    value={item.work_type}
+                  >
+                    {WORK_TYPE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <button disabled={processing || classifyingWorkId === item.id} onClick={() => approve(item.id)} type="button">通过</button>
+                <button disabled={processing || classifyingWorkId === item.id} onClick={() => openReject([item.id])} type="button">打回</button>
                 <button onClick={() => setPreviewWork(item)} type="button">预览</button>
-                <button className="dangerButton" disabled={processing} onClick={() => deletePendingWork(item)} type="button">删除</button>
+                <button className="dangerButton" disabled={processing || classifyingWorkId === item.id} onClick={() => deletePendingWork(item)} type="button">删除</button>
               </div>
             </article>
           ))}
@@ -3393,8 +3506,9 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
               <label>
                 作品类型
                 <select value={workDraft.work_type} onChange={(event) => updateWorkDraft("work_type", event.target.value)}>
-                  <option value="training">培训作品</option>
-                  <option value="ai">AI 作品</option>
+                  {WORK_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
                 </select>
               </label>
               <label>
@@ -3634,7 +3748,9 @@ function formatCourseTime(course) {
 }
 
 function workTypeLabel(work) {
-  return work.work_type_label || (work.work_type === "ai" ? "AI 作品" : "培训作品");
+  return work.work_type_label
+    || WORK_TYPE_OPTIONS.find((option) => option.value === work.work_type)?.label
+    || "作品";
 }
 
 function mediaTypeLabel(work) {

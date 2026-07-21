@@ -252,7 +252,7 @@ button {
 
 .loginActions button:first-child,
 .publishForm > button,
-.reviewActions button:first-child {
+.reviewActions button:first-of-type {
   background: var(--ink);
   color: #fff;
 }
@@ -261,7 +261,7 @@ button {
 .quietButton,
 .filterRow button,
 .actionRow button:first-child,
-.reviewActions button:last-child {
+.reviewActions button:last-of-type {
   background: #fff;
   color: var(--text);
   border: 1px solid var(--line);
@@ -815,6 +815,12 @@ button {
   min-width: 0;
   gap: 6px;
   flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.filterRow::-webkit-scrollbar {
+  display: none;
 }
 
 .filterRow button.active {
@@ -1387,10 +1393,35 @@ button {
 
 .rankItem {
   min-width: 0;
+  width: 100%;
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
+  padding: 6px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 160ms ease, transform 160ms ease;
+}
+
+.rankItem:not(:disabled):hover {
+  background: rgba(255, 31, 47, 0.06);
+  transform: translateY(-1px);
+}
+
+.rankItem:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+}
+
+.rankItem:disabled {
+  cursor: wait;
+  opacity: 0.72;
 }
 
 .rankItem strong {
@@ -4138,6 +4169,24 @@ textarea,
   color: #d51f2f;
 }
 
+.reviewClassification,
+.galleryClassification {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.reviewClassification select,
+.galleryClassification select {
+  min-width: 0;
+  border-radius: 10px;
+  padding: 9px 10px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .reviewLogPanel {
   border: 1px solid var(--line);
   border-radius: 24px;
@@ -5107,6 +5156,12 @@ button:disabled {
 .worksGalleryFilters {
   display: flex;
   gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.worksGalleryFilters::-webkit-scrollbar {
+  display: none;
 }
 
 .worksGalleryFilters button {
@@ -5385,6 +5440,10 @@ button:disabled {
   color: #d51f2f;
   font-size: 11px;
   font-weight: 900;
+}
+
+.galleryClassification {
+  margin-top: 10px;
 }
 
 .galleryEnd {
@@ -5886,7 +5945,7 @@ button:disabled {
   }
 
   .worksGalleryFilters button {
-    flex: 1;
+    flex: 1 0 auto;
     padding: 9px 8px;
     font-size: 12px;
   }
@@ -5971,7 +6030,7 @@ button:disabled {
 
   .feedToolbar .filterRow button {
     min-width: 0;
-    flex: 1;
+    flex: 1 0 auto;
     padding: 8px 7px;
   }
 
@@ -6113,6 +6172,10 @@ button:disabled {
 
   .reviewActions {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .reviewClassification {
+    grid-column: 1 / -1;
   }
 
   .rejectTemplateGrid {

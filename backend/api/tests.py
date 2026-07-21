@@ -314,6 +314,104 @@ class WorkApiTests(TestCase):
         self.assertIn('2026-07-20', [str(value) for value in camp_response.data['training_dates']])
         self.assertEqual([item['id'] for item in works_response.data], [current_work.id])
 
+    def test_student_can_submit_ai_competition_work(self):
+        self.client.force_authenticate(self.student)
+
+        response = self.client.post('/api/works/', {
+            'title': 'AI 比赛参赛作品',
+            'work_type': Work.WorkType.AI_COMPETITION,
+            'description': '学员在投稿时主动选择 AI 比赛作品分类。',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data['work_type'], Work.WorkType.AI_COMPETITION)
+        self.assertEqual(response.data['work_type_label'], 'AI 比赛作品')
+        self.assertEqual(response.data['status'], Work.Status.PENDING)
+        self.assertTrue(Work.objects.filter(
+            author=self.student,
+            work_type=Work.WorkType.AI_COMPETITION,
+        ).exists())
+
+    def test_public_ai_competition_filter_only_returns_current_approved_competition_works(self):
+        competition_work = Work.objects.create(
+            camp=self.camp,
+            author=self.student,
+            title='当前比赛作品',
+            work_type=Work.WorkType.AI_COMPETITION,
+            description='应该出现在比赛分类中。',
+            status=Work.Status.APPROVED,
+        )
+        Work.objects.create(
+            camp=self.camp,
+            author=self.other,
+            title='普通 AI 作品',
+            work_type=Work.WorkType.AI,
+            description='不应该出现在比赛分类中。',
+            status=Work.Status.APPROVED,
+        )
+        Work.objects.create(
+            camp=self.camp,
+            author=self.other,
+            title='待审比赛作品',
+            work_type=Work.WorkType.AI_COMPETITION,
+            description='待审核作品不应该公开。',
+            status=Work.Status.PENDING,
+        )
+        old_camp = TrainingCamp.objects.create(
+            name='Old competition camp',
+            slug='old-competition-camp',
+            start_date='2025-07-01',
+            end_date='2025-07-05',
+        )
+        Work.objects.create(
+            camp=old_camp,
+            author=self.student,
+            title='历史比赛作品',
+            work_type=Work.WorkType.AI_COMPETITION,
+            description='历史培训期作品不应该进入当前列表。',
+            status=Work.Status.APPROVED,
+        )
+
+        response = self.client.get('/api/works/?type=ai_competition')
+        leaderboard_response = self.client.get('/api/leaderboard/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item['id'] for item in response.data], [competition_work.id])
+        leaderboard_item = next(item for item in leaderboard_response.data if item['id'] == competition_work.id)
+        self.assertEqual(leaderboard_item['work_type_label'], 'AI 比赛作品')
+
+    def test_leaderboard_excludes_display_only_work(self):
+        display_only_work = Work.objects.create(
+            camp=self.camp,
+            author=self.student,
+            title='官方培训直播',
+            work_type=Work.WorkType.TRAINING,
+            description='用于作品墙展示，但不参与学员作品排行。',
+            status=Work.Status.APPROVED,
+            include_in_leaderboard=False,
+        )
+        ranked_work = Work.objects.create(
+            camp=self.camp,
+            author=self.other,
+            title='学员参赛作品',
+            work_type=Work.WorkType.TRAINING,
+            description='应该进入排行榜的学员作品。',
+            status=Work.Status.APPROVED,
+        )
+        Like.objects.create(user=self.student, work=display_only_work)
+        Like.objects.create(user=self.other, work=display_only_work)
+        Vote.objects.create(user=self.student, work=display_only_work)
+        Vote.objects.create(user=self.other, work=display_only_work)
+
+        works_response = self.client.get('/api/works/')
+        leaderboard_response = self.client.get('/api/leaderboard/')
+
+        self.assertEqual(works_response.status_code, 200)
+        self.assertIn(display_only_work.id, [item['id'] for item in works_response.data])
+        self.assertEqual(leaderboard_response.status_code, 200)
+        self.assertNotIn(display_only_work.id, [item['id'] for item in leaderboard_response.data])
+        self.assertIn(ranked_work.id, [item['id'] for item in leaderboard_response.data])
+
     def test_vote_limit_resets_for_each_training_camp(self):
         self.camp.vote_limit = 1
         self.camp.save(update_fields=['vote_limit'])
@@ -697,6 +795,7 @@ class WorkApiTests(TestCase):
             'like_count': 999,
             'vote_count': 999,
             'reviewed_by': self.admin.id,
+            'include_in_leaderboard': False,
         }, format='json')
 
         self.assertEqual(response.status_code, 201)
@@ -705,6 +804,7 @@ class WorkApiTests(TestCase):
         self.assertEqual(work.likes.count(), 0)
         self.assertEqual(work.votes.count(), 0)
         self.assertIsNone(work.reviewed_by)
+        self.assertTrue(work.include_in_leaderboard)
 
     def test_courses_are_read_only_for_students(self):
         course = Course.objects.create(
@@ -751,6 +851,107 @@ class WorkApiTests(TestCase):
         self.assertEqual(response.data['reviewed_count'], 2)
         self.assertEqual(Work.objects.filter(status=Work.Status.APPROVED, id__in=[work.id for work in works]).count(), 2)
         self.assertEqual(WorkReviewLog.objects.filter(action=WorkReviewLog.Action.APPROVE).count(), 2)
+
+    def test_admin_can_reclassify_published_work_without_resetting_review(self):
+        reviewed_at = timezone.now() - timedelta(hours=1)
+        work = Work.objects.create(
+            camp=self.camp,
+            author=self.student,
+            title='已发布普通 AI 作品',
+            work_type=Work.WorkType.AI,
+            description='管理员可以将它归入 AI 比赛作品。',
+            status=Work.Status.APPROVED,
+            include_in_leaderboard=False,
+            reviewed_by=self.admin,
+            reviewed_at=reviewed_at,
+        )
+        self.camp.submission_ends_at = timezone.now() - timedelta(minutes=1)
+        self.camp.save(update_fields=['submission_ends_at'])
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.patch(
+            f'/api/works/{work.id}/classification/',
+            {'work_type': Work.WorkType.AI_COMPETITION, 'title': '不应被修改'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        work.refresh_from_db()
+        self.assertEqual(work.work_type, Work.WorkType.AI_COMPETITION)
+        self.assertEqual(work.title, '已发布普通 AI 作品')
+        self.assertEqual(work.status, Work.Status.APPROVED)
+        self.assertFalse(work.include_in_leaderboard)
+        self.assertEqual(work.reviewed_by, self.admin)
+        self.assertEqual(work.reviewed_at, reviewed_at)
+
+    def test_student_cannot_use_admin_work_classification_endpoint(self):
+        work = Work.objects.create(
+            camp=self.camp,
+            author=self.student,
+            title='不能自行绕过审核改分类',
+            work_type=Work.WorkType.AI,
+            description='普通学员不能调用管理员分类接口。',
+            status=Work.Status.APPROVED,
+        )
+        self.client.force_authenticate(self.student)
+
+        response = self.client.patch(
+            f'/api/works/{work.id}/classification/',
+            {'work_type': 'ai_competition'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 403)
+        work.refresh_from_db()
+        self.assertEqual(work.work_type, Work.WorkType.AI)
+
+    def test_admin_classification_rejects_invalid_work_type(self):
+        work = Work.objects.create(
+            camp=self.camp,
+            author=self.student,
+            title='分类校验作品',
+            work_type=Work.WorkType.TRAINING,
+            description='非法分类不能写入数据库。',
+            status=Work.Status.APPROVED,
+        )
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.patch(
+            f'/api/works/{work.id}/classification/',
+            {'work_type': 'not-a-real-type'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        work.refresh_from_db()
+        self.assertEqual(work.work_type, Work.WorkType.TRAINING)
+
+    def test_admin_cannot_reclassify_historical_camp_work(self):
+        old_camp = TrainingCamp.objects.create(
+            name='Historical classification camp',
+            slug='historical-classification-camp',
+            start_date='2025-06-01',
+            end_date='2025-06-05',
+        )
+        work = Work.objects.create(
+            camp=old_camp,
+            author=self.student,
+            title='历史培训期作品',
+            work_type=Work.WorkType.AI,
+            description='管理员分类接口不能跨培训期修改历史数据。',
+            status=Work.Status.APPROVED,
+        )
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.patch(
+            f'/api/works/{work.id}/classification/',
+            {'work_type': Work.WorkType.AI_COMPETITION},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 404)
+        work.refresh_from_db()
+        self.assertEqual(work.work_type, Work.WorkType.AI)
 
     def test_admin_can_filter_pending_works_by_author(self):
         Work.objects.create(

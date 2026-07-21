@@ -481,6 +481,7 @@ class Work(models.Model):
     class WorkType(models.TextChoices):
         TRAINING = 'training', '培训作品'
         AI = 'ai', 'AI 作品'
+        AI_COMPETITION = 'ai_competition', 'AI 比赛作品'
 
     class Status(models.TextChoices):
         PENDING = 'pending', '待审核'
@@ -515,6 +516,11 @@ class Work(models.Model):
     description = models.TextField()
     tags = models.ManyToManyField(Tag, related_name='works', blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    include_in_leaderboard = models.BooleanField(
+        default=True,
+        verbose_name='参与排行榜',
+        help_text='关闭后作品仍在作品墙展示，但不会进入排行榜或本周精选。',
+    )
     reject_reason = models.TextField(blank=True)
     reviewed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

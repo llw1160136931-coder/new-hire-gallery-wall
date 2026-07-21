@@ -181,6 +181,7 @@ export const api = {
   deleteCourseResource: (id) => apiRequest(`/course-resources/${id}/`, { method: "DELETE" }),
   courseResourceFile: (id) => apiFileRequest(`/course-resources/${id}/file/`),
   works: (type) => apiRequest(type && type !== "all" ? `/works/?type=${type}` : "/works/"),
+  work: (id) => apiRequest(`/works/${id}/`),
   workFile: (id) => apiFileRequest(`/works/${id}/file/`),
   myWorks: () => apiRequest("/works/my/"),
   pendingWorks: (filters = {}) => {
@@ -206,6 +207,8 @@ export const api = {
   likeWork: (id) => apiRequest(`/works/${id}/like/`, { method: "POST" }),
   voteWork: (id) => apiRequest(`/works/${id}/vote/`, { method: "POST" }),
   approveWork: (id) => apiRequest(`/works/${id}/approve/`, { method: "POST" }),
+  classifyWork: (id, workType) =>
+    apiRequest(`/works/${id}/classification/`, { method: "PATCH", body: { work_type: workType } }),
   rejectWork: (id, rejectReason) =>
     apiRequest(`/works/${id}/reject/`, { method: "POST", body: { reject_reason: rejectReason } }),
 };

@@ -567,6 +567,10 @@ class ReviewSerializer(serializers.Serializer):
     reject_reason = serializers.CharField(required=False, allow_blank=True)
 
 
+class WorkClassificationSerializer(serializers.Serializer):
+    work_type = serializers.ChoiceField(choices=Work.WorkType.choices)
+
+
 class BulkReviewSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=WorkReviewLog.Action.values)
     ids = serializers.ListField(
@@ -602,13 +606,14 @@ class WorkReviewLogSerializer(serializers.ModelSerializer):
 
 class LeaderboardSerializer(serializers.ModelSerializer):
     author_name = serializers.CharField(source='author.profile.name', read_only=True)
+    work_type_label = serializers.CharField(source='get_work_type_display', read_only=True)
     like_count = serializers.IntegerField(read_only=True)
     vote_count = serializers.IntegerField(read_only=True)
     score = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = Work
-        fields = ['id', 'title', 'work_type', 'author_name', 'like_count', 'vote_count', 'score']
+        fields = ['id', 'title', 'work_type', 'work_type_label', 'author_name', 'like_count', 'vote_count', 'score']
 
 
 class PublicProfileSerializer(serializers.ModelSerializer):
