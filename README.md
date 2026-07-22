@@ -104,6 +104,7 @@ POST /api/auth/token/refresh/
 ```text
 GET    /api/camps/current/      # 当前激活培训期、日期、投稿/投票状态与票数配置
 GET    /api/tags/popular/       # 当前培训期已发布作品的热门标签及使用次数
+GET    /api/works/?page=1&page_size=8&type=ai&q=关键词 # 当前培训期已发布作品，服务端分页/分类/搜索
 GET    /api/search/?q=关键词
 GET    /api/attendance/today/  # 学员查看本人今日签到状态，不返回签到码
 POST   /api/attendance/check-in/ # 学员提交当前时段的 4 位签到码
@@ -128,6 +129,8 @@ POST   /api/works/{id}/approve/
 POST   /api/works/{id}/reject/
 PATCH  /api/me/                 # multipart，可上传 avatar 文件
 ```
+
+前端请求公开作品列表时显式传入 `page`/`page_size`，默认每页 8 条且 `page_size` 最大为 10，结果按创建时间和 ID 倒序稳定分页。分页响应包含 `count`、`page`、`page_size`、`total_pages`、`next`、`previous` 和 `results`；`type` 与 `q` 会先参与过滤，再计算总数和页数。为兼容滚动部署期间的旧版前端，不带 `page` 和 `page_size` 的 `/api/works/` 仍保持原有数组响应；`/api/works/my/` 与 `/api/works/pending/` 也继续返回数组。
 
 签到时段为 `08:00-12:00`、`12:00-18:00`、`18:00-21:00`，均采用左闭右开区间。时间、角色、签到码、重复签到和逾期限制全部由 Django 后端校验；每个培训期每天每个时段只能生成一个签到码。签到接口默认限制为每个账号每分钟 10 次请求，同一学员在同一时段输错 5 次后会被锁定。
 

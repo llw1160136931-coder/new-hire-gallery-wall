@@ -1,3 +1,5 @@
+import { buildWorksQuery, normalizeWorksPage } from "./workPagination";
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8001/api";
 
 const ACCESS_TOKEN_KEY = "newHireGallery.accessToken";
@@ -180,7 +182,12 @@ export const api = {
   courseMindMapFile: (id) => apiFileRequest(`/courses/${id}/mind-map-file/`),
   deleteCourseResource: (id) => apiRequest(`/course-resources/${id}/`, { method: "DELETE" }),
   courseResourceFile: (id) => apiFileRequest(`/course-resources/${id}/file/`),
-  works: (type) => apiRequest(type && type !== "all" ? `/works/?type=${type}` : "/works/"),
+  works: async (filters = {}, options = {}) => {
+    const query = buildWorksQuery(filters);
+    const requested = typeof filters === "string" ? { type: filters } : filters;
+    const payload = await apiRequest(`/works/?${query}`, options);
+    return normalizeWorksPage(payload, requested);
+  },
   work: (id) => apiRequest(`/works/${id}/`),
   workFile: (id) => apiFileRequest(`/works/${id}/file/`),
   myWorks: () => apiRequest("/works/my/"),

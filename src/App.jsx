@@ -20,6 +20,7 @@ import {
   COURSE_MIND_MAP_MAX_PIXELS,
   optimizeCourseMindMapFile,
 } from "./courseMindMapImage";
+import { buildPaginationItems, WORKS_PAGE_SIZE } from "./workPagination";
 
 const studentTabs = [
   { id: "feed", label: "灵感", icon: "✦" },
@@ -78,6 +79,14 @@ const MAX_COURSE_RESOURCE_COUNT = 10;
 const COURSE_MIND_MAP_ACCEPT = ".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp";
 const COURSE_RESOURCE_ACCEPT = ".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation";
 const WELCOME_SEEN_KEY = "newHireGallery.welcomeSeen";
+const EMPTY_WORKS_PAGE = {
+  count: 0,
+  page: 1,
+  page_size: WORKS_PAGE_SIZE,
+  total_pages: 1,
+  next: null,
+  previous: null,
+};
 const REVIEW_REJECT_TEMPLATES = [
   "作品介绍不够完整，请补充背景、亮点和创作过程。",
   "作品链接或附件暂时无法打开，请检查后重新提交。",
@@ -454,6 +463,8 @@ function FeedView({ camp, role }) {
   const [searchResults, setSearchResults] = useState(null);
   const [searching, setSearching] = useState(false);
   const [works, setWorks] = useState([]);
+  const [worksPage, setWorksPage] = useState(1);
+  const [worksPageInfo, setWorksPageInfo] = useState(EMPTY_WORKS_PAGE);
   const [leaderboard, setLeaderboard] = useState([]);
   const [courses, setCourses] = useState([]);
   const [selectedWork, setSelectedWork] = useState(null);
@@ -461,6 +472,7 @@ function FeedView({ camp, role }) {
   const [loading, setLoading] = useState(true);
   const [coursesLoading, setCoursesLoading] = useState(true);
   const [error, setError] = useState("");
+  const [leaderboardError, setLeaderboardError] = useState("");
   const [coursesError, setCoursesError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
   const [actionError, setActionError] = useState("");
@@ -472,23 +484,6 @@ function FeedView({ camp, role }) {
       setSelectedDate(firstDate);
     }
   }, [selectedDate, trainingDates]);
-
-  async function loadWorks() {
-    setLoading(true);
-    setError("");
-    try {
-      const [nextWorks, nextLeaderboard] = await Promise.all([
-        api.works(filter),
-        api.leaderboard(),
-      ]);
-      setWorks(nextWorks);
-      setLeaderboard(nextLeaderboard);
-    } catch (feedError) {
-      setError(feedError.message || "作品流加载失败");
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function loadCourses(date = selectedDate) {
     setCoursesLoading(true);
@@ -522,8 +517,59 @@ function FeedView({ camp, role }) {
   }
 
   useEffect(() => {
-    loadWorks();
-  }, [filter]);
+    const controller = new AbortController();
+
+    async function loadWorksPage() {
+      setLoading(true);
+      setError("");
+      try {
+        const nextPage = await api.works({
+          type: filter,
+          page: worksPage,
+          pageSize: WORKS_PAGE_SIZE,
+        }, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        setWorks(nextPage.results);
+        setWorksPageInfo(nextPage);
+      } catch (feedError) {
+        if (controller.signal.aborted || feedError.name === "AbortError") return;
+        if (feedError.status === 404 && worksPage > 1) {
+          setWorksPage((current) => Math.max(1, current - 1));
+          return;
+        }
+        setWorks([]);
+        setWorksPageInfo(EMPTY_WORKS_PAGE);
+        setError(feedError.message || "作品流加载失败");
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadWorksPage();
+    return () => controller.abort();
+  }, [filter, worksPage]);
+
+  useEffect(() => {
+    let active = true;
+    setLeaderboardError("");
+    api.leaderboard()
+      .then((nextLeaderboard) => {
+        if (active) {
+          setLeaderboard(nextLeaderboard);
+          setLeaderboardError("");
+        }
+      })
+      .catch((loadError) => {
+        if (active) {
+          setLeaderboardError(loadError.message || "排行榜加载失败，请稍后重试");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [camp?.id]);
 
   useEffect(() => {
     if (selectedDate) {
@@ -540,6 +586,11 @@ function FeedView({ camp, role }) {
   const rankedWorks = leaderboard;
   const totalVotes = rankedWorks.reduce((sum, work) => sum + (work.vote_count ?? 0), 0);
 
+  function changeWorkFilter(nextFilter) {
+    setFilter(nextFilter);
+    setWorksPage(1);
+  }
+
   async function likeWork(id) {
     setActionMessage("");
     setActionError("");
@@ -547,7 +598,14 @@ function FeedView({ camp, role }) {
       const response = await api.likeWork(id);
       syncWorkFromResponse(response?.work);
       setActionMessage(response?.detail || "点赞成功");
-      await loadWorks();
+      api.leaderboard()
+        .then((nextLeaderboard) => {
+          setLeaderboard(nextLeaderboard);
+          setLeaderboardError("");
+        })
+        .catch((refreshError) => {
+          setLeaderboardError(refreshError.message || "排行榜刷新失败，请稍后重试");
+        });
       return response;
     } catch (actionFailure) {
       syncWorkFromResponse(actionFailure.details?.work);
@@ -563,7 +621,14 @@ function FeedView({ camp, role }) {
       const response = await api.voteWork(id);
       syncWorkFromResponse(response?.work);
       setActionMessage(response?.detail || "投票成功");
-      await loadWorks();
+      api.leaderboard()
+        .then((nextLeaderboard) => {
+          setLeaderboard(nextLeaderboard);
+          setLeaderboardError("");
+        })
+        .catch((refreshError) => {
+          setLeaderboardError(refreshError.message || "排行榜刷新失败，请稍后重试");
+        });
       return response;
     } catch (actionFailure) {
       syncWorkFromResponse(actionFailure.details?.work);
@@ -768,28 +833,29 @@ function FeedView({ camp, role }) {
 
       <div className="feedToolbar">
         <div className="filterRow" aria-label="作品类型" role="group">
-          <button aria-pressed={filter === "all"} className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")} type="button">
+          <button aria-pressed={filter === "all"} className={filter === "all" ? "active" : ""} onClick={() => changeWorkFilter("all")} type="button">
             推荐
           </button>
-          <button aria-pressed={filter === "training"} className={filter === "training" ? "active" : ""} onClick={() => setFilter("training")} type="button">
+          <button aria-pressed={filter === "training"} className={filter === "training" ? "active" : ""} onClick={() => changeWorkFilter("training")} type="button">
             培训花絮直播
           </button>
-          <button aria-pressed={filter === "ai"} className={filter === "ai" ? "active" : ""} onClick={() => setFilter("ai")} type="button">
+          <button aria-pressed={filter === "ai"} className={filter === "ai" ? "active" : ""} onClick={() => changeWorkFilter("ai")} type="button">
             AI 作品
           </button>
           <button
             aria-pressed={filter === "ai_competition"}
             className={filter === "ai_competition" ? "active" : ""}
-            onClick={() => setFilter("ai_competition")}
+            onClick={() => changeWorkFilter("ai_competition")}
             type="button"
           >
             AI 比赛作品
           </button>
         </div>
-        <span className="feedWorkCount"><strong>{works.length}</strong> 个作品</span>
+        <span className="feedWorkCount"><strong>{worksPageInfo.count}</strong> 个作品</span>
       </div>
 
       {error && <p className="errorText">{error}</p>}
+      {leaderboardError && <p className="errorText">{leaderboardError}</p>}
       {loading ? (
         <div className="loadingCard">正在加载作品...</div>
       ) : works.length === 0 ? (
@@ -807,6 +873,13 @@ function FeedView({ camp, role }) {
             />
           ))}
         </MasonryGrid>
+      )}
+      {!loading && works.length > 0 && (
+        <PaginationControls
+          onPageChange={setWorksPage}
+          page={worksPageInfo.page}
+          totalPages={worksPageInfo.total_pages}
+        />
       )}
       {selectedCourse && (
         <CourseDetailModal
@@ -827,6 +900,10 @@ function WorksGalleryView({ role }) {
   const [works, setWorks] = useState([]);
   const [filter, setFilter] = useState("all");
   const [keyword, setKeyword] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageInfo, setPageInfo] = useState(EMPTY_WORKS_PAGE);
+  const [reloadEpoch, setReloadEpoch] = useState(0);
   const [selectedWork, setSelectedWork] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -835,34 +912,68 @@ function WorksGalleryView({ role }) {
   const [deletingWorkId, setDeletingWorkId] = useState(null);
   const [classifyingWorkId, setClassifyingWorkId] = useState(null);
 
-  async function loadWorks() {
-    setLoading(true);
-    setError("");
-    try {
-      setWorks(await api.works(filter));
-    } catch (loadError) {
-      setError(loadError.message || "作品加载失败，请稍后重试");
-    } finally {
-      setLoading(false);
-    }
-  }
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setPage(1);
+      setSearchQuery(keyword.trim());
+    }, 350);
+    return () => window.clearTimeout(timeout);
+  }, [keyword]);
 
   useEffect(() => {
-    loadWorks();
-  }, [filter]);
+    const controller = new AbortController();
 
-  const visibleWorks = useMemo(() => {
-    const normalizedKeyword = keyword.trim().toLowerCase();
-    if (!normalizedKeyword) {
-      return works;
+    async function loadWorksPage() {
+      setLoading(true);
+      setError("");
+      try {
+        const nextPage = await api.works({
+          type: filter,
+          page,
+          pageSize: WORKS_PAGE_SIZE,
+          search: searchQuery,
+        }, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        setWorks(nextPage.results);
+        setPageInfo(nextPage);
+      } catch (loadError) {
+        if (controller.signal.aborted || loadError.name === "AbortError") return;
+        if (loadError.status === 404 && page > 1) {
+          setPage((current) => Math.max(1, current - 1));
+          return;
+        }
+        setWorks([]);
+        setPageInfo(EMPTY_WORKS_PAGE);
+        setError(loadError.message || "作品加载失败，请稍后重试");
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      }
     }
-    return works.filter((work) => [
-      work.title,
-      work.description,
-      work.author_name,
-      ...(work.tags || []),
-    ].some((value) => String(value || "").toLowerCase().includes(normalizedKeyword)));
-  }, [keyword, works]);
+
+    loadWorksPage();
+    return () => controller.abort();
+  }, [filter, page, reloadEpoch, searchQuery]);
+
+  function changeGalleryFilter(nextFilter) {
+    setFilter(nextFilter);
+    setPage(1);
+  }
+
+  function clearGallerySearch() {
+    setKeyword("");
+    setSearchQuery("");
+    setPage(1);
+  }
+
+  function reloadAfterRemoval() {
+    if (works.length === 1 && page > 1) {
+      setPage((current) => current - 1);
+    } else {
+      setReloadEpoch((current) => current + 1);
+    }
+  }
 
   function syncWork(nextWork) {
     if (!nextWork) {
@@ -907,8 +1018,8 @@ function WorksGalleryView({ role }) {
     setActionError("");
     try {
       await api.deleteWork(work.id);
-      setWorks((current) => current.filter((item) => item.id !== work.id));
       setActionMessage("作品已删除。");
+      reloadAfterRemoval();
     } catch (deleteError) {
       setActionError(deleteError.message || "删除失败，请稍后重试");
     } finally {
@@ -926,7 +1037,7 @@ function WorksGalleryView({ role }) {
     try {
       const nextWork = await api.classifyWork(work.id, workType);
       if (filter !== "all" && nextWork.work_type !== filter) {
-        setWorks((current) => current.filter((item) => item.id !== nextWork.id));
+        reloadAfterRemoval();
       } else {
         syncWork(nextWork);
       }
@@ -959,20 +1070,20 @@ function WorksGalleryView({ role }) {
           <h1>大家的作品</h1>
           <p>向下滑动，看看同学们最新发布的灵感与成果。</p>
         </div>
-        <strong>{visibleWorks.length}<small> 个作品</small></strong>
+        <strong>{pageInfo.count}<small> 个作品</small></strong>
       </header>
 
       <div className="worksGalleryToolbar">
         <div className="worksGalleryFilters" aria-label="作品分类">
-          <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")} type="button">全部</button>
-          <button className={filter === "training" ? "active" : ""} onClick={() => setFilter("training")} type="button">培训作品</button>
-          <button className={filter === "ai" ? "active" : ""} onClick={() => setFilter("ai")} type="button">AI 作品</button>
-          <button className={filter === "ai_competition" ? "active" : ""} onClick={() => setFilter("ai_competition")} type="button">AI 比赛作品</button>
+          <button className={filter === "all" ? "active" : ""} onClick={() => changeGalleryFilter("all")} type="button">全部</button>
+          <button className={filter === "training" ? "active" : ""} onClick={() => changeGalleryFilter("training")} type="button">培训作品</button>
+          <button className={filter === "ai" ? "active" : ""} onClick={() => changeGalleryFilter("ai")} type="button">AI 作品</button>
+          <button className={filter === "ai_competition" ? "active" : ""} onClick={() => changeGalleryFilter("ai_competition")} type="button">AI 比赛作品</button>
         </div>
         <label className="worksGallerySearch">
           <span>⌕</span>
           <input aria-label="搜索作品" onChange={(event) => setKeyword(event.target.value)} placeholder="搜索标题、作者或标签" value={keyword} />
-          {keyword && <button aria-label="清空搜索" onClick={() => setKeyword("")} type="button">×</button>}
+          {keyword && <button aria-label="清空搜索" onClick={clearGallerySearch} type="button">×</button>}
         </label>
       </div>
 
@@ -984,14 +1095,14 @@ function WorksGalleryView({ role }) {
         <div className="galleryLoadingGrid" aria-label="正在加载作品">
           {Array.from({ length: 8 }, (_, index) => <span key={index} />)}
         </div>
-      ) : visibleWorks.length === 0 ? (
+      ) : works.length === 0 ? (
         <EmptyState
           title={keyword ? "没有找到相关作品" : "还没有已发布作品"}
           text={keyword ? "换一个标题、作者或标签试试。" : "作品通过审核后会显示在这里。"}
         />
       ) : (
         <div className="worksWaterfall">
-          {visibleWorks.map((work, index) => (
+          {works.map((work, index) => (
             <GalleryWorkCard
               classifying={classifyingWorkId === work.id}
               deleting={deletingWorkId === work.id}
@@ -1006,7 +1117,14 @@ function WorksGalleryView({ role }) {
           ))}
         </div>
       )}
-      {!loading && visibleWorks.length > 0 && <p className="galleryEnd">— 已经看到全部作品啦 —</p>}
+      {!loading && works.length > 0 && (
+        <PaginationControls
+          onPageChange={setPage}
+          page={pageInfo.page}
+          totalPages={pageInfo.total_pages}
+        />
+      )}
+      {!loading && works.length > 0 && pageInfo.total_pages <= 1 && <p className="galleryEnd">— 已经看到全部作品啦 —</p>}
     </section>
   );
 }
@@ -1157,7 +1275,7 @@ function WorkCard({ work, index, onLike, onOpen, onVote }) {
   return (
     <article className="workCard">
       {work.media_type === "video" && attachment ? (
-        <video className="workImage" controls src={attachment} />
+        <video className="workImage" controls playsInline preload="metadata" src={attachment} />
       ) : (
         <button aria-label={`查看 ${work.title} 详情`} className="workPreviewButton" onClick={onOpen} type="button">
           {image ? (
@@ -3653,6 +3771,86 @@ function AdminRail() {
 
 function notifyReviewQueueChanged() {
   window.dispatchEvent(new Event("reviewQueueChanged"));
+}
+
+function PaginationControls({ page, totalPages, onPageChange }) {
+  const normalizedTotal = Math.max(1, Number.parseInt(totalPages, 10) || 1);
+  const normalizedPage = Math.min(normalizedTotal, Math.max(1, Number.parseInt(page, 10) || 1));
+  const [jumpPage, setJumpPage] = useState(String(normalizedPage));
+  const items = buildPaginationItems(normalizedPage, normalizedTotal);
+
+  useEffect(() => {
+    setJumpPage(String(normalizedPage));
+  }, [normalizedPage]);
+
+  if (normalizedTotal <= 1) {
+    return null;
+  }
+
+  function changePage(nextPage) {
+    const target = Math.min(normalizedTotal, Math.max(1, nextPage));
+    if (target !== normalizedPage) {
+      onPageChange(target);
+    }
+  }
+
+  function submitJump(event) {
+    event.preventDefault();
+    const parsed = Number.parseInt(jumpPage, 10);
+    const target = Number.isInteger(parsed)
+      ? Math.min(normalizedTotal, Math.max(1, parsed))
+      : normalizedPage;
+    setJumpPage(String(target));
+    changePage(target);
+  }
+
+  return (
+    <nav className="worksPagination" aria-label="作品分页">
+      <button
+        disabled={normalizedPage <= 1}
+        onClick={() => changePage(normalizedPage - 1)}
+        type="button"
+      >
+        ← 上一页
+      </button>
+      <div className="paginationPages">
+        {items.map((item) => typeof item === "number" ? (
+          <button
+            aria-current={item === normalizedPage ? "page" : undefined}
+            className={item === normalizedPage ? "active" : ""}
+            key={item}
+            onClick={() => changePage(item)}
+            type="button"
+          >
+            {item}
+          </button>
+        ) : <span aria-hidden="true" key={item}>…</span>)}
+      </div>
+      <span className="paginationSummary">第 {normalizedPage} / {normalizedTotal} 页</span>
+      <form className="paginationJump" onSubmit={submitJump}>
+        <label>
+          <span>跳至</span>
+          <input
+            aria-label="跳转到页码"
+            inputMode="numeric"
+            max={normalizedTotal}
+            min="1"
+            onChange={(event) => setJumpPage(event.target.value.replace(/\D/g, ""))}
+            type="number"
+            value={jumpPage}
+          />
+        </label>
+        <button type="submit">确定</button>
+      </form>
+      <button
+        disabled={normalizedPage >= normalizedTotal}
+        onClick={() => changePage(normalizedPage + 1)}
+        type="button"
+      >
+        下一页 →
+      </button>
+    </nav>
+  );
 }
 
 function EmptyState({ title, text }) {

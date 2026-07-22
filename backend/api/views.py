@@ -50,6 +50,7 @@ from .course_files import (
     validate_course_mind_map_file,
     validate_course_resource_file,
 )
+from .pagination import WorkPageNumberPagination
 from .permissions import IsAdminRole, IsAttendanceAdminRole, IsStudentRole
 from .serializers import (
     BulkReviewSerializer,
@@ -751,6 +752,17 @@ class CourseResourceViewSet(mixins.DestroyModelMixin, viewsets.GenericViewSet):
 class WorkViewSet(viewsets.ModelViewSet):
     serializer_class = WorkSerializer
     parser_classes = [parsers.JSONParser, parsers.FormParser, parsers.MultiPartParser]
+    pagination_class = WorkPageNumberPagination
+
+    def paginate_queryset(self, queryset):
+        # The previous public API returned an array. Only opt into the paginated
+        # envelope when a client asks for pagination so rolling deployments do
+        # not break an older frontend while the new assets are propagating.
+        if self.action == 'list' and not any(
+            parameter in self.request.query_params for parameter in ('page', 'page_size')
+        ):
+            return None
+        return super().paginate_queryset(queryset)
 
     def get_permissions(self):
         if self.action in ['approve', 'reject', 'pending', 'bulk_review', 'review_logs', 'classification']:
@@ -770,8 +782,18 @@ class WorkViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(status=Work.Status.APPROVED)
         if self.action == 'list':
             work_type = self.request.query_params.get('type')
+            keyword = self.request.query_params.get('q', '').strip()[:100]
             if work_type:
                 queryset = queryset.filter(work_type=work_type)
+            if keyword:
+                queryset = queryset.filter(
+                    Q(title__icontains=keyword)
+                    | Q(description__icontains=keyword)
+                    | Q(author__profile__name__icontains=keyword)
+                    | Q(author__username__icontains=keyword)
+                    | Q(tags__name__icontains=keyword)
+                ).distinct()
+            queryset = queryset.order_by('-created_at', '-id')
         if self.action == 'my':
             queryset = queryset.filter(author=self.request.user)
         if self.action == 'file':

@@ -123,6 +123,22 @@ class LocustFileSafetyTests(unittest.TestCase):
         self.assertFalse(predicate(_JsonResponse({'detail': '投稿时间已结束'})))
         self.assertFalse(predicate(_JsonResponse({'other': '已经点赞过这个作品'})))
 
+    def test_work_payload_parser_requires_paginated_contract(self):
+        payload = {
+            'count': 9,
+            'page': 1,
+            'page_size': 8,
+            'total_pages': 2,
+            'next': 'https://example.test/api/works/?page=2',
+            'previous': None,
+            'results': [{'id': 1}, {'id': 2}],
+        }
+
+        self.assertEqual(locustfile._works_from_payload(payload), payload['results'])
+        self.assertIsNone(locustfile._works_from_payload(payload['results']))
+        self.assertIsNone(locustfile._works_from_payload({**payload, 'total_pages': 0}))
+        self.assertIsNone(locustfile._works_from_payload({**payload, 'results': ['invalid']}))
+
 
 if __name__ == '__main__':
     unittest.main()

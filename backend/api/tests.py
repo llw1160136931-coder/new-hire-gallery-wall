@@ -314,6 +314,88 @@ class WorkApiTests(TestCase):
         self.assertIn('2026-07-20', [str(value) for value in camp_response.data['training_dates']])
         self.assertEqual([item['id'] for item in works_response.data], [current_work.id])
 
+    def test_public_work_list_is_paginated_with_stable_newest_first_order(self):
+        works = [
+            Work.objects.create(
+                camp=self.camp,
+                author=self.student,
+                title=f'分页作品 {index}',
+                work_type=Work.WorkType.AI,
+                description='分页回归测试。',
+                status=Work.Status.APPROVED,
+            )
+            for index in range(11)
+        ]
+        Work.objects.filter(id__in=[work.id for work in works]).update(created_at=timezone.now())
+
+        first_page = self.client.get('/api/works/?page=1')
+        second_page = self.client.get('/api/works/?page=2')
+        oversized_page = self.client.get('/api/works/?page_size=100')
+        legacy_response = self.client.get('/api/works/')
+
+        self.assertEqual(first_page.status_code, 200)
+        self.assertEqual(first_page.data['count'], 11)
+        self.assertEqual(first_page.data['page'], 1)
+        self.assertEqual(first_page.data['page_size'], 8)
+        self.assertEqual(first_page.data['total_pages'], 2)
+        self.assertEqual(len(first_page.data['results']), 8)
+        self.assertIsNotNone(first_page.data['next'])
+        self.assertIsNone(first_page.data['previous'])
+        self.assertEqual(
+            [item['id'] for item in first_page.data['results']],
+            [work.id for work in reversed(works[3:])],
+        )
+
+        self.assertEqual(second_page.status_code, 200)
+        self.assertEqual(second_page.data['page'], 2)
+        self.assertEqual(second_page.data['total_pages'], 2)
+        self.assertEqual(
+            [item['id'] for item in second_page.data['results']],
+            [work.id for work in reversed(works[:3])],
+        )
+        self.assertIsNone(second_page.data['next'])
+        self.assertIsNotNone(second_page.data['previous'])
+        self.assertEqual(oversized_page.status_code, 200)
+        self.assertEqual(oversized_page.data['page_size'], 10)
+        self.assertEqual(len(oversized_page.data['results']), 10)
+        self.assertEqual(legacy_response.status_code, 200)
+        self.assertIsInstance(legacy_response.data, list)
+        self.assertEqual(len(legacy_response.data), 11)
+
+    def test_public_work_list_searches_before_paginating_and_keeps_filters(self):
+        matching_work = Work.objects.create(
+            camp=self.camp,
+            author=self.student,
+            title='普通标题',
+            work_type=Work.WorkType.AI,
+            description='通过标签搜索这个作品。',
+            status=Work.Status.APPROVED,
+        )
+        matching_work.tags.add(Tag.objects.create(name='精准分页标签', normalized_name='精准分页标签'))
+        Work.objects.create(
+            camp=self.camp,
+            author=self.other,
+            title='精准分页标签但分类不同',
+            work_type=Work.WorkType.TRAINING,
+            description='分类过滤必须在分页计数之前生效。',
+            status=Work.Status.APPROVED,
+        )
+        Work.objects.create(
+            camp=self.camp,
+            author=self.other,
+            title='精准分页标签待审核',
+            work_type=Work.WorkType.AI,
+            description='待审核作品不能公开。',
+            status=Work.Status.PENDING,
+        )
+
+        response = self.client.get('/api/works/?type=ai&q=精准分页标签&page=1')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['total_pages'], 1)
+        self.assertEqual([item['id'] for item in response.data['results']], [matching_work.id])
+
     def test_student_can_submit_ai_competition_work(self):
         self.client.force_authenticate(self.student)
 

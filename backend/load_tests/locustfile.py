@@ -432,12 +432,28 @@ def _jwt_expiry(access_token: str) -> float:
         return time.time() + 12 * 60
 
 
-def _works_from_payload(payload) -> list[dict]:
-    if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
-    if isinstance(payload, dict) and isinstance(payload.get("results"), list):
-        return [item for item in payload["results"] if isinstance(item, dict)]
-    return []
+def _works_from_payload(payload) -> list[dict] | None:
+    if not isinstance(payload, dict):
+        return None
+    required = {'count', 'page', 'page_size', 'total_pages', 'next', 'previous', 'results'}
+    if not required.issubset(payload):
+        return None
+    count = payload['count']
+    page = payload['page']
+    page_size = payload['page_size']
+    total_pages = payload['total_pages']
+    results = payload['results']
+    if not all(type(value) is int for value in (count, page, page_size, total_pages)):
+        return None
+    if count < 0 or page < 1 or page_size < 1 or total_pages < 1 or page > total_pages:
+        return None
+    if not isinstance(results, list) or any(not isinstance(item, dict) for item in results):
+        return None
+    if len(results) > page_size or count < len(results):
+        return None
+    if not all(payload[key] is None or isinstance(payload[key], str) for key in ('next', 'previous')):
+        return None
+    return results
 
 
 def _is_test_hostname(hostname: str) -> bool:
@@ -545,7 +561,7 @@ class GalleryUserBase(HttpUser):
 
     def _get_works(self, *, headers: dict[str, str] | None = None, name: str = "GET /api/works") -> list[dict]:
         with self.client.get(
-            _api("works/"),
+            _api("works/?page=1&page_size=8"),
             headers=headers,
             name=name,
             catch_response=True,
@@ -554,6 +570,13 @@ class GalleryUserBase(HttpUser):
             if outcome != "ok":
                 return []
             works = _works_from_payload(_json_payload(response))
+            if works is None:
+                _mark_malformed(
+                    response,
+                    "invalid_work_page",
+                    "work list response did not match the paginated API contract",
+                )
+                return []
             if not works:
                 _count_classification("empty_work_list")
             return works

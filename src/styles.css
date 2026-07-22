@@ -5453,6 +5453,98 @@ button:disabled {
   text-align: center;
 }
 
+.worksPagination {
+  width: fit-content;
+  max-width: 100%;
+  margin: 30px auto 8px;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  border: 1px solid #eee7e7;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 8px 24px rgba(29, 25, 25, 0.06);
+}
+
+.worksPagination button,
+.worksPagination input {
+  height: 38px;
+  border: 1px solid #e8dfdf;
+  border-radius: 11px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.worksPagination button {
+  padding: 0 13px;
+}
+
+.worksPagination button:hover:not(:disabled),
+.worksPagination button.active {
+  border-color: var(--red);
+  background: var(--red);
+  color: #fff;
+}
+
+.worksPagination button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.paginationPages {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.paginationPages button {
+  width: 38px;
+  padding: 0;
+}
+
+.paginationPages span {
+  width: 18px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.paginationSummary {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.paginationJump,
+.paginationJump label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.paginationJump label > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.paginationJump input {
+  width: 58px;
+  padding: 0 7px;
+  outline: none;
+  text-align: center;
+}
+
+.paginationJump input:focus {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px rgba(238, 29, 48, 0.1);
+}
+
 .galleryLoadingGrid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -5473,6 +5565,41 @@ button:disabled {
 
 @keyframes galleryShimmer {
   to { background-position: -200% 0; }
+}
+
+@media (max-width: 680px) {
+  .worksPagination {
+    width: 100%;
+    gap: 8px;
+  }
+
+  .paginationPages {
+    display: none;
+  }
+
+  .worksPagination > button:first-child,
+  .worksPagination > button:last-child {
+    min-width: 96px;
+    flex: 1;
+  }
+
+  .worksPagination > button:first-child {
+    order: 1;
+  }
+
+  .paginationSummary {
+    order: 2;
+  }
+
+  .worksPagination > button:last-child {
+    order: 3;
+  }
+
+  .paginationJump {
+    width: 100%;
+    order: 4;
+    justify-content: center;
+  }
 }
 
 @keyframes appEnter {
