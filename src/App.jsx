@@ -20,6 +20,10 @@ import {
   COURSE_MIND_MAP_MAX_PIXELS,
   optimizeCourseMindMapFile,
 } from "./courseMindMapImage";
+import {
+  buildPersonalizedTalentProfileBlob,
+  fetchTalentProfileAvatarDataUrl,
+} from "./talentProfileDocument";
 import { buildPaginationItems, WORKS_PAGE_SIZE } from "./workPagination";
 
 const studentTabs = [
@@ -78,20 +82,6 @@ const CHUNK_SIZE = 5 * 1024 * 1024;
 const MAX_COURSE_RESOURCE_COUNT = 10;
 const COURSE_MIND_MAP_ACCEPT = ".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp";
 const COURSE_RESOURCE_ACCEPT = ".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation";
-const TALENT_PROFILE_PREVIEW_CSP = [
-  "default-src 'none'",
-  "script-src 'unsafe-inline' https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js",
-  "style-src 'unsafe-inline'",
-  "img-src 'none'",
-  "font-src 'none'",
-  "connect-src 'none'",
-  "media-src 'none'",
-  "object-src 'none'",
-  "frame-src 'none'",
-  "worker-src 'none'",
-  "form-action 'none'",
-  "base-uri 'none'",
-].join("; ");
 const WELCOME_SEEN_KEY = "newHireGallery.welcomeSeen";
 const EMPTY_WORKS_PAGE = {
   count: 0,
@@ -3287,11 +3277,13 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
   const [talentProfileMeta, setTalentProfileMeta] = useState(null);
   const [talentProfileStatus, setTalentProfileStatus] = useState("loading");
   const [talentProfileError, setTalentProfileError] = useState("");
+  const [talentProfileNotice, setTalentProfileNotice] = useState("");
   const [talentProfileAction, setTalentProfileAction] = useState("");
   const [talentProfilePreviewUrl, setTalentProfilePreviewUrl] = useState("");
   const talentProfileRequestId = useRef(0);
   const talentProfileActionId = useRef(0);
   const talentProfilePreviewUrlRef = useRef("");
+  const talentProfilePreviewBlobRef = useRef(null);
   const [myWorks, setMyWorks] = useState([]);
   const [editingWorkId, setEditingWorkId] = useState(null);
   const [workDraft, setWorkDraft] = useState(null);
@@ -3315,8 +3307,17 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
         URL.revokeObjectURL(talentProfilePreviewUrlRef.current);
         talentProfilePreviewUrlRef.current = "";
       }
+      talentProfilePreviewBlobRef.current = null;
     };
-  }, []);
+  }, [profile.username]);
+
+  useEffect(() => {
+    talentProfileActionId.current += 1;
+    setTalentProfileAction("");
+    setTalentProfileError("");
+    setTalentProfileNotice("");
+    closeTalentProfilePreview();
+  }, [profile.username, profile.name, profile.avatar]);
 
   useEffect(() => {
     if (!talentProfilePreviewUrl) {
@@ -3363,6 +3364,7 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
   function closeTalentProfilePreview() {
     const objectUrl = talentProfilePreviewUrlRef.current;
     talentProfilePreviewUrlRef.current = "";
+    talentProfilePreviewBlobRef.current = null;
     setTalentProfilePreviewUrl("");
     if (objectUrl) {
       URL.revokeObjectURL(objectUrl);
@@ -3380,12 +3382,34 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
     setTalentProfileError(profileError.message || fallbackMessage);
   }
 
+  async function loadPersonalizedTalentProfileBlob(fileBlob) {
+    let avatarDataUrl = "";
+    let notice = "";
+    if (profile.avatar) {
+      try {
+        avatarDataUrl = await fetchTalentProfileAvatarDataUrl(profile.avatar);
+      } catch (avatarError) {
+        notice = `${avatarError.message || "系统头像读取失败"}，已保留画像原有姓名占位。`;
+      }
+    }
+
+    const personalized = await buildPersonalizedTalentProfileBlob(fileBlob, {
+      avatarDataUrl,
+      avatarAlt: `${profile.name || profile.username || "学员"}的个人头像`,
+    });
+    if (avatarDataUrl && !personalized.avatarApplied) {
+      notice = `${personalized.fallbackReason || "系统头像嵌入失败"}，已保留画像原有姓名占位。`;
+    }
+    return { blob: personalized.blob, notice };
+  }
+
   async function openTalentProfile() {
     if (talentProfileStatus !== "available" || talentProfileAction) return;
     const actionId = talentProfileActionId.current + 1;
     talentProfileActionId.current = actionId;
     setTalentProfileAction("view");
     setTalentProfileError("");
+    setTalentProfileNotice("");
     try {
       const result = await api.talentProfileFile();
       if (actionId !== talentProfileActionId.current) return;
@@ -3393,9 +3417,10 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
         throw new Error("人才画像文件为空，请联系管理员重新发布");
       }
 
-      const previewBlob = await buildTalentProfilePreviewBlob(result.blob);
+      const personalized = await loadPersonalizedTalentProfileBlob(result.blob);
       if (actionId !== talentProfileActionId.current) return;
-      const objectUrl = URL.createObjectURL(previewBlob);
+      setTalentProfileNotice(personalized.notice);
+      const objectUrl = URL.createObjectURL(personalized.blob);
       if (actionId !== talentProfileActionId.current) {
         URL.revokeObjectURL(objectUrl);
         return;
@@ -3404,6 +3429,7 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
         URL.revokeObjectURL(talentProfilePreviewUrlRef.current);
       }
       talentProfilePreviewUrlRef.current = objectUrl;
+      talentProfilePreviewBlobRef.current = personalized.blob;
       setTalentProfilePreviewUrl(objectUrl);
     } catch (profileError) {
       if (actionId === talentProfileActionId.current) {
@@ -3416,27 +3442,50 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
     }
   }
 
-  async function downloadTalentProfile() {
+  function triggerTalentProfileDownload(fileBlob) {
+    const objectUrl = URL.createObjectURL(fileBlob);
+    const downloadLink = document.createElement("a");
+    downloadLink.href = objectUrl;
+    downloadLink.download = talentProfileMeta?.original_filename || "我的人才画像.html";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    downloadLink.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  }
+
+  async function downloadTalentProfile(useCurrentPreview = false) {
     if (talentProfileStatus !== "available" || talentProfileAction) return;
     const actionId = talentProfileActionId.current + 1;
     talentProfileActionId.current = actionId;
     setTalentProfileAction("download");
     setTalentProfileError("");
+    if (!useCurrentPreview) {
+      setTalentProfileNotice("");
+    }
     try {
+      if (useCurrentPreview && talentProfilePreviewBlobRef.current) {
+        triggerTalentProfileDownload(talentProfilePreviewBlobRef.current);
+        return;
+      }
+
       const result = await api.talentProfileFile();
       if (actionId !== talentProfileActionId.current) return;
       if (!result.blob.size) {
         throw new Error("人才画像文件为空，请联系管理员重新发布");
       }
 
-      const objectUrl = URL.createObjectURL(result.blob);
-      const downloadLink = document.createElement("a");
-      downloadLink.href = objectUrl;
-      downloadLink.download = talentProfileMeta?.original_filename || "我的人才画像.html";
-      document.body.appendChild(downloadLink);
-      downloadLink.click();
-      downloadLink.remove();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+      let downloadBlob = result.blob;
+      let notice = "";
+      try {
+        const personalized = await loadPersonalizedTalentProfileBlob(result.blob);
+        downloadBlob = personalized.blob;
+        notice = personalized.notice;
+      } catch (personalizationError) {
+        notice = `${personalizationError.message || "画像个性化处理失败"}，已下载服务器原始报告，未嵌入系统头像。`;
+      }
+      if (actionId !== talentProfileActionId.current) return;
+      setTalentProfileNotice(notice);
+      triggerTalentProfileDownload(downloadBlob);
     } catch (profileError) {
       if (actionId === talentProfileActionId.current) {
         handleTalentProfileFileError(profileError, "人才画像下载失败，请稍后重试");
@@ -3729,6 +3778,12 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
                 {formatFileSize(talentProfileMeta?.file_size)}
                 {talentProfileMeta?.updated_at ? ` · 更新于 ${formatFullDate(talentProfileMeta.updated_at)}` : ""}
               </small>
+              {talentProfileNotice && (
+                <small className="profileTalentNotice" role="status">{talentProfileNotice}</small>
+              )}
+              {talentProfileError && (
+                <small className="profileTalentError" role="alert">{talentProfileError}</small>
+              )}
             </>
           ) : talentProfileStatus === "unavailable" ? (
             <p>你的专属人才画像尚未发布，发布后即可在这里查看和下载。</p>
@@ -3754,7 +3809,7 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
               <button
                 className="secondary"
                 disabled={talentProfileStatus !== "available" || Boolean(talentProfileAction)}
-                onClick={downloadTalentProfile}
+                onClick={() => downloadTalentProfile(false)}
                 type="button"
               >
                 {talentProfileAction === "download" ? "准备下载..." : "下载 HTML"}
@@ -3925,7 +3980,7 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
                 <button
                   className="talentProfilePreviewDownload"
                   disabled={Boolean(talentProfileAction)}
-                  onClick={downloadTalentProfile}
+                  onClick={() => downloadTalentProfile(true)}
                   type="button"
                 >
                   {talentProfileAction === "download" ? "准备下载..." : "下载"}
@@ -3942,6 +3997,9 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
             </header>
             {talentProfileError && (
               <p className="talentProfilePreviewError" role="alert">{talentProfileError}</p>
+            )}
+            {talentProfileNotice && (
+              <p className="talentProfilePreviewNotice" role="status">{talentProfileNotice}</p>
             )}
             <iframe
               referrerPolicy="no-referrer"
@@ -4255,35 +4313,6 @@ function genderLabel(value) {
 
 function scoreWork(work) {
   return (work.like_count ?? 0) + (work.vote_count ?? 0);
-}
-
-async function buildTalentProfilePreviewBlob(fileBlob) {
-  const html = await fileBlob.text();
-  if (!html.trim()) {
-    throw new Error("人才画像文件为空，请联系管理员重新发布");
-  }
-
-  const previewDocument = new DOMParser().parseFromString(html, "text/html");
-  const documentElement = previewDocument.documentElement;
-  const head = previewDocument.head;
-  if (!documentElement || documentElement.tagName !== "HTML" || !head) {
-    throw new Error("人才画像预览安全策略注入失败，请下载后查看");
-  }
-
-  const cspMeta = previewDocument.createElement("meta");
-  cspMeta.setAttribute("http-equiv", "Content-Security-Policy");
-  cspMeta.setAttribute("content", TALENT_PROFILE_PREVIEW_CSP);
-  head.prepend(cspMeta);
-
-  const injectedCsp = head.querySelector('meta[http-equiv="Content-Security-Policy"]');
-  if (injectedCsp?.getAttribute("content") !== TALENT_PROFILE_PREVIEW_CSP) {
-    throw new Error("人才画像预览安全策略注入失败，请下载后查看");
-  }
-
-  return new Blob(
-    [`<!DOCTYPE html>\n${documentElement.outerHTML}`],
-    { type: "text/html;charset=utf-8" },
-  );
 }
 
 function formatFileSize(size) {

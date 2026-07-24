@@ -2567,6 +2567,14 @@ body.workImageLightboxOpen .sideNav {
 
 .profileTalentCopy .profileTalentError {
   color: #c82834;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.profileTalentCopy .profileTalentNotice {
+  color: #a05a00;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .profileTalentActions {
@@ -2772,6 +2780,15 @@ body.workImageLightboxOpen .sideNav {
   padding: 9px 18px;
   background: #fff0f0;
   color: #c82834;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.talentProfilePreviewNotice {
+  margin: 0;
+  padding: 9px 18px;
+  background: #fff8e8;
+  color: #925600;
   font-size: 12px;
   font-weight: 800;
 }
