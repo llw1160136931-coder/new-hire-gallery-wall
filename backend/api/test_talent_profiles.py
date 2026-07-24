@@ -345,6 +345,118 @@ class ImportTalentProfilesTests(TransactionTestCase):
             self.assertEqual(report.sha256, hashlib.sha256(content).hexdigest())
             self.assertNotIn(report.student.profile.name, report.file.name)
 
+    def test_explicit_missing_name_supports_dry_run_and_import_with_warning(self):
+        self.second.profile.name = ' Ａlice '
+        self.second.profile.save(update_fields=['name'])
+        archive_path = self.make_archive([
+            ('01-学员甲-新员工人才画像报告.html', talent_profile_html('学员甲')),
+        ])
+        dry_run_output = io.StringIO()
+        dry_run_errors = io.StringIO()
+
+        call_command(
+            'import_talent_profiles',
+            archive_path,
+            '--allow-missing-name',
+            ' Alice ',
+            '--dry-run',
+            stdout=dry_run_output,
+            stderr=dry_run_errors,
+        )
+
+        self.assertIn('检查通过', dry_run_output.getvalue())
+        self.assertIn('警告', dry_run_errors.getvalue())
+        self.assertIn('Alice', dry_run_errors.getvalue())
+        self.assertEqual(TalentProfileReport.objects.count(), 0)
+        self.assertEqual(self.stored_html_files(), [])
+
+        import_output = io.StringIO()
+        import_errors = io.StringIO()
+        call_command(
+            'import_talent_profiles',
+            archive_path,
+            allowed_missing_names=[' Alice '],
+            stdout=import_output,
+            stderr=import_errors,
+        )
+
+        self.assertIn('导入完成', import_output.getvalue())
+        self.assertIn('警告', import_errors.getvalue())
+        self.assertIn('Alice', import_errors.getvalue())
+        report = TalentProfileReport.objects.get(camp=self.camp)
+        self.assertEqual(report.student_id, self.first.id)
+        self.assertFalse(
+            TalentProfileReport.objects.filter(
+                camp=self.camp,
+                student=self.second,
+            ).exists()
+        )
+        self.assertEqual(len(self.stored_html_files()), 1)
+
+    def test_missing_name_parameter_rejects_unknown_student(self):
+        archive_path = self.make_archive([
+            ('01-学员甲-新员工人才画像报告.html', talent_profile_html('学员甲')),
+        ])
+
+        with self.assertRaises(CommandError):
+            call_command(
+                'import_talent_profiles',
+                archive_path,
+                allowed_missing_names=['不存在学员'],
+                stdout=io.StringIO(),
+            )
+
+        self.assertEqual(TalentProfileReport.objects.count(), 0)
+        self.assertEqual(self.stored_html_files(), [])
+
+    def test_missing_name_parameter_rejects_name_already_in_zip(self):
+        archive_path = self.make_archive()
+
+        with self.assertRaises(CommandError):
+            call_command(
+                'import_talent_profiles',
+                archive_path,
+                allowed_missing_names=[' 学员乙 '],
+                stdout=io.StringIO(),
+            )
+
+        self.assertEqual(TalentProfileReport.objects.count(), 0)
+        self.assertEqual(self.stored_html_files(), [])
+
+    def test_missing_name_parameter_must_cover_every_missing_member(self):
+        third = self.create_member('import-third', '学员丙')
+        archive_path = self.make_archive([
+            ('01-学员甲-新员工人才画像报告.html', talent_profile_html('学员甲')),
+        ])
+
+        with self.assertRaises(CommandError) as raised:
+            call_command(
+                'import_talent_profiles',
+                archive_path,
+                allowed_missing_names=['学员乙'],
+                stdout=io.StringIO(),
+            )
+
+        self.assertIn(third.profile.name, str(raised.exception))
+        self.assertEqual(TalentProfileReport.objects.count(), 0)
+        self.assertEqual(self.stored_html_files(), [])
+
+    def test_missing_name_parameter_rejects_normalized_duplicates(self):
+        archive_path = self.make_archive([
+            ('01-学员甲-新员工人才画像报告.html', talent_profile_html('学员甲')),
+        ])
+
+        with self.assertRaises(CommandError):
+            call_command(
+                'import_talent_profiles',
+                archive_path,
+                allowed_missing_names=['学员乙', ' 学员乙 '],
+                stdout=io.StringIO(),
+            )
+
+        self.assertEqual(TalentProfileReport.objects.count(), 0)
+        self.assertEqual(self.stored_html_files(), [])
+
     def test_invalid_archive_or_roster_fails_before_any_write(self):
         cases = {
             'body-name-mismatch': [
@@ -453,6 +565,7 @@ class ImportTalentProfilesTests(TransactionTestCase):
             parsed_reports,
             *,
             replace_existing,
+            allowed_missing_names,
         ):
             students = {
                 user.profile.name: user
@@ -470,6 +583,7 @@ class ImportTalentProfilesTests(TransactionTestCase):
                 camp,
                 parsed_reports,
                 replace_existing=replace_existing,
+                allowed_missing_names=allowed_missing_names,
             )
 
         output = io.StringIO()
@@ -483,6 +597,46 @@ class ImportTalentProfilesTests(TransactionTestCase):
         self.assertIn('相同内容跳过 2 份', output.getvalue())
         self.assertEqual(TalentProfileReport.objects.count(), 2)
         self.assertEqual(len(self.stored_html_files()), 2)
+
+    def test_missing_name_exception_is_revalidated_inside_transaction(self):
+        archive_path = self.make_archive([
+            ('01-学员甲-新员工人才画像报告.html', talent_profile_html('学员甲')),
+        ])
+        original_apply_plans = Command._apply_plans
+
+        def add_unlisted_member_before_locked_recheck(
+            command,
+            camp,
+            parsed_reports,
+            *,
+            replace_existing,
+            allowed_missing_names,
+        ):
+            self.create_member('import-late-member', '学员丙', camp=camp)
+            return original_apply_plans(
+                command,
+                camp,
+                parsed_reports,
+                replace_existing=replace_existing,
+                allowed_missing_names=allowed_missing_names,
+            )
+
+        with patch.object(
+            Command,
+            '_apply_plans',
+            new=add_unlisted_member_before_locked_recheck,
+        ):
+            with self.assertRaises(CommandError) as raised:
+                call_command(
+                    'import_talent_profiles',
+                    archive_path,
+                    allowed_missing_names=['学员乙'],
+                    stdout=io.StringIO(),
+                )
+
+        self.assertIn('学员丙', str(raised.exception))
+        self.assertEqual(TalentProfileReport.objects.count(), 0)
+        self.assertEqual(self.stored_html_files(), [])
 
     def test_same_hash_is_idempotent_and_changed_content_requires_replace(self):
         first_archive = self.make_archive()

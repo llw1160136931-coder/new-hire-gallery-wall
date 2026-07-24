@@ -127,12 +127,27 @@ class Command(BaseCommand):
             action='store_true',
             help='允许替换当前培训期中内容发生变化的已有画像',
         )
+        parser.add_argument(
+            '--allow-missing-name',
+            dest='allowed_missing_names',
+            action='append',
+            default=[],
+            metavar='NAME',
+            help='显式允许一名培训期普通学员缺少画像；可重复使用',
+        )
 
     def handle(self, *args, **options):
         archive_path = Path(options['zip_path']).expanduser().resolve()
+        allowed_missing_names = self._normalize_allowed_missing_names(
+            options.get('allowed_missing_names', [])
+        )
         camp = self._resolve_camp(options.get('camp_slug'))
         parsed_reports = self._read_and_validate_archive(archive_path)
-        students_by_name = self._validate_roster(camp, parsed_reports)
+        students_by_name = self._validate_roster(
+            camp,
+            parsed_reports,
+            allowed_missing_names=allowed_missing_names,
+        )
         plans = self._build_plans(
             camp,
             parsed_reports,
@@ -142,6 +157,7 @@ class Command(BaseCommand):
 
         summary = self._plan_summary(plans)
         if options['dry_run']:
+            self._warn_allowed_missing_names(allowed_missing_names)
             self.stdout.write(self.style.SUCCESS(f'检查通过：{summary}；文件和数据库未改动。'))
             return
 
@@ -149,8 +165,10 @@ class Command(BaseCommand):
             camp,
             parsed_reports,
             replace_existing=options['replace_existing'],
+            allowed_missing_names=allowed_missing_names,
         )
         summary = self._plan_summary(applied_plans)
+        self._warn_allowed_missing_names(allowed_missing_names)
         self.stdout.write(self.style.SUCCESS(f'导入完成：{summary}。'))
         self.stdout.write('安全提示：请立即删除服务器上的原始 ZIP 文件。')
 
@@ -313,7 +331,14 @@ class Command(BaseCommand):
             sha256=hashlib.sha256(content).hexdigest(),
         )
 
-    def _validate_roster(self, camp, parsed_reports, *, lock=False):
+    def _validate_roster(
+        self,
+        camp,
+        parsed_reports,
+        *,
+        allowed_missing_names=frozenset(),
+        lock=False,
+    ):
         queryset = (
             TrainingCampMembership.objects
             .select_related('student', 'student__profile')
@@ -343,7 +368,23 @@ class Command(BaseCommand):
 
         report_names = {report.name for report in parsed_reports}
         member_names = set(memberships_by_name)
-        missing = sorted(member_names - report_names)
+        unknown_allowed_names = sorted(allowed_missing_names - member_names)
+        if unknown_allowed_names:
+            raise CommandError(
+                '允许缺少画像的姓名不属于所选培训期的唯一普通学员：'
+                + '、'.join(unknown_allowed_names)
+                + '。'
+            )
+
+        allowed_names_with_reports = sorted(allowed_missing_names & report_names)
+        if allowed_names_with_reports:
+            raise CommandError(
+                '以下显式允许缺少画像的学员已包含在 ZIP 中：'
+                + '、'.join(allowed_names_with_reports)
+                + '。'
+            )
+
+        missing = sorted((member_names - report_names) - allowed_missing_names)
         extra = sorted(report_names - member_names)
         if missing or extra:
             details = []
@@ -407,7 +448,14 @@ class Command(BaseCommand):
             )
         return plans
 
-    def _apply_plans(self, camp, parsed_reports, *, replace_existing):
+    def _apply_plans(
+        self,
+        camp,
+        parsed_reports,
+        *,
+        replace_existing,
+        allowed_missing_names,
+    ):
         storage = TalentProfileReport._meta.get_field('file').storage
         created_file_names = []
         old_file_names = []
@@ -417,6 +465,7 @@ class Command(BaseCommand):
                 students_by_name = self._validate_roster(
                     locked_camp,
                     parsed_reports,
+                    allowed_missing_names=allowed_missing_names,
                     lock=True,
                 )
                 plans = self._build_plans(
@@ -471,6 +520,37 @@ class Command(BaseCommand):
     @staticmethod
     def _normalize_name(value):
         return unicodedata.normalize('NFKC', str(value or '')).strip()
+
+    def _normalize_allowed_missing_names(self, values):
+        normalized_names = []
+        seen_names = set()
+        duplicate_names = set()
+        for value in values:
+            name = self._normalize_name(value)
+            if not name:
+                raise CommandError('--allow-missing-name 不能使用空姓名。')
+            if name in seen_names:
+                duplicate_names.add(name)
+            seen_names.add(name)
+            normalized_names.append(name)
+        if duplicate_names:
+            raise CommandError(
+                '--allow-missing-name 存在重复姓名：'
+                + '、'.join(sorted(duplicate_names))
+                + '。'
+            )
+        return frozenset(normalized_names)
+
+    def _warn_allowed_missing_names(self, allowed_missing_names):
+        if not allowed_missing_names:
+            return
+        self.stderr.write(
+            self.style.WARNING(
+                '警告：已显式允许以下培训期成员缺少人才画像，本次不会为其创建报告：'
+                + '、'.join(sorted(allowed_missing_names))
+                + '。'
+            )
+        )
 
     @staticmethod
     def _plan_summary(plans):
