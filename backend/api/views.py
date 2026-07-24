@@ -18,6 +18,7 @@ from django.utils.http import content_disposition_header
 from django.utils.text import get_valid_filename
 from rest_framework import mixins, parsers, permissions, serializers, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
@@ -38,6 +39,7 @@ from .models import (
     Like,
     Profile,
     Tag,
+    TalentProfileReport,
     TrainingCamp,
     TrainingCampMembership,
     Vote,
@@ -75,6 +77,28 @@ MAX_ATTENDANCE_FAILED_ATTEMPTS = 5
 
 def active_camp():
     return TrainingCamp.get_active()
+
+
+def current_talent_profile_report(request):
+    camp = active_camp()
+    if not camp:
+        raise Http404('当前没有激活的培训期')
+    if not is_camp_member(request.user, camp):
+        raise PermissionDenied('当前账号不属于本培训期')
+
+    report = (
+        TalentProfileReport.objects
+        .filter(
+            camp=camp,
+            camp__is_active=True,
+            camp__memberships__student=request.user,
+            student=request.user,
+        )
+        .first()
+    )
+    if not report:
+        raise Http404('当前培训期尚未生成您的人才画像')
+    return report
 
 
 def window_is_open(starts_at, ends_at):
@@ -206,6 +230,36 @@ class MeView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+
+class TalentProfileReportView(APIView):
+    permission_classes = [IsStudentRole]
+
+    def get(self, request):
+        report = current_talent_profile_report(request)
+        response = Response({
+            'available': True,
+            'original_filename': report.original_filename,
+            'file_size': report.file_size,
+            'updated_at': report.updated_at,
+        })
+        response['Cache-Control'] = 'private, no-store'
+        response['X-Content-Type-Options'] = 'nosniff'
+        return response
+
+
+class TalentProfileReportFileView(APIView):
+    permission_classes = [IsStudentRole]
+
+    def get(self, request):
+        report = current_talent_profile_report(request)
+        return protected_course_file_response(
+            report.file,
+            report.original_filename,
+            'application/octet-stream',
+            report.file_size,
+            attachment=True,
+        )
 
 
 class StudentAttendanceTodayView(APIView):

@@ -15,6 +15,7 @@ from .course_files import (
     validate_course_resource_file,
 )
 from .storage import protected_course_storage
+from .talent_profile_files import talent_profile_report_upload_to
 from .work_files import protected_work_html_upload_to
 
 
@@ -166,6 +167,40 @@ class Profile(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class TalentProfileReport(models.Model):
+    camp = models.ForeignKey(
+        TrainingCamp,
+        on_delete=models.PROTECT,
+        related_name='talent_profile_reports',
+    )
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='talent_profile_reports',
+    )
+    file = models.FileField(
+        upload_to=talent_profile_report_upload_to,
+        storage=protected_course_storage,
+    )
+    original_filename = models.CharField(max_length=255)
+    file_size = models.PositiveBigIntegerField()
+    sha256 = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['camp_id', 'student_id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['camp', 'student'],
+                name='unique_talent_profile_per_camp_student',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.camp} - {self.student.username}'
 
 
 class Course(models.Model):

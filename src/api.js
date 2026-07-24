@@ -166,6 +166,8 @@ export async function login(username, password) {
 
 export const api = {
   me: () => apiRequest("/me/"),
+  talentProfile: () => apiRequest("/me/talent-profile/"),
+  talentProfileFile: () => apiFileRequest("/me/talent-profile/file/"),
   currentCamp: () => apiRequest("/camps/current/", { auth: false }),
   updateMe: (profile) => apiRequest("/me/", { method: "PATCH", body: profile }),
   attendanceToday: () => apiRequest("/attendance/today/"),

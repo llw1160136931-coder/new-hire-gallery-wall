@@ -78,6 +78,20 @@ const CHUNK_SIZE = 5 * 1024 * 1024;
 const MAX_COURSE_RESOURCE_COUNT = 10;
 const COURSE_MIND_MAP_ACCEPT = ".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp";
 const COURSE_RESOURCE_ACCEPT = ".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation";
+const TALENT_PROFILE_PREVIEW_CSP = [
+  "default-src 'none'",
+  "script-src 'unsafe-inline' https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js",
+  "style-src 'unsafe-inline'",
+  "img-src 'none'",
+  "font-src 'none'",
+  "connect-src 'none'",
+  "media-src 'none'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "worker-src 'none'",
+  "form-action 'none'",
+  "base-uri 'none'",
+].join("; ");
 const WELCOME_SEEN_KEY = "newHireGallery.welcomeSeen";
 const EMPTY_WORKS_PAGE = {
   count: 0,
@@ -3270,6 +3284,14 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
   const [draft, setDraft] = useState(profile);
   const [avatarFile, setAvatarFile] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [talentProfileMeta, setTalentProfileMeta] = useState(null);
+  const [talentProfileStatus, setTalentProfileStatus] = useState("loading");
+  const [talentProfileError, setTalentProfileError] = useState("");
+  const [talentProfileAction, setTalentProfileAction] = useState("");
+  const [talentProfilePreviewUrl, setTalentProfilePreviewUrl] = useState("");
+  const talentProfileRequestId = useRef(0);
+  const talentProfileActionId = useRef(0);
+  const talentProfilePreviewUrlRef = useRef("");
   const [myWorks, setMyWorks] = useState([]);
   const [editingWorkId, setEditingWorkId] = useState(null);
   const [workDraft, setWorkDraft] = useState(null);
@@ -3283,6 +3305,148 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
   useEffect(() => {
     setDraft(profile);
   }, [profile]);
+
+  useEffect(() => {
+    loadTalentProfile();
+    return () => {
+      talentProfileRequestId.current += 1;
+      talentProfileActionId.current += 1;
+      if (talentProfilePreviewUrlRef.current) {
+        URL.revokeObjectURL(talentProfilePreviewUrlRef.current);
+        talentProfilePreviewUrlRef.current = "";
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!talentProfilePreviewUrl) {
+      return undefined;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    function closeOnEscape(event) {
+      if (event.key === "Escape") {
+        closeTalentProfilePreview();
+      }
+    }
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [talentProfilePreviewUrl]);
+
+  async function loadTalentProfile() {
+    const requestId = talentProfileRequestId.current + 1;
+    talentProfileRequestId.current = requestId;
+    setTalentProfileStatus("loading");
+    setTalentProfileError("");
+    try {
+      const metadata = await api.talentProfile();
+      if (requestId !== talentProfileRequestId.current) return;
+      setTalentProfileMeta(metadata);
+      setTalentProfileStatus("available");
+    } catch (profileError) {
+      if (requestId !== talentProfileRequestId.current) return;
+      setTalentProfileMeta(null);
+      if (profileError.status === 404) {
+        setTalentProfileStatus("unavailable");
+      } else {
+        setTalentProfileStatus("error");
+        setTalentProfileError(profileError.message || "人才画像状态读取失败，请稍后重试");
+      }
+    }
+  }
+
+  function closeTalentProfilePreview() {
+    const objectUrl = talentProfilePreviewUrlRef.current;
+    talentProfilePreviewUrlRef.current = "";
+    setTalentProfilePreviewUrl("");
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+
+  function handleTalentProfileFileError(profileError, fallbackMessage) {
+    if (profileError.status === 404) {
+      closeTalentProfilePreview();
+      setTalentProfileMeta(null);
+      setTalentProfileStatus("unavailable");
+      setTalentProfileError("");
+      return;
+    }
+    setTalentProfileError(profileError.message || fallbackMessage);
+  }
+
+  async function openTalentProfile() {
+    if (talentProfileStatus !== "available" || talentProfileAction) return;
+    const actionId = talentProfileActionId.current + 1;
+    talentProfileActionId.current = actionId;
+    setTalentProfileAction("view");
+    setTalentProfileError("");
+    try {
+      const result = await api.talentProfileFile();
+      if (actionId !== talentProfileActionId.current) return;
+      if (!result.blob.size) {
+        throw new Error("人才画像文件为空，请联系管理员重新发布");
+      }
+
+      const previewBlob = await buildTalentProfilePreviewBlob(result.blob);
+      if (actionId !== talentProfileActionId.current) return;
+      const objectUrl = URL.createObjectURL(previewBlob);
+      if (actionId !== talentProfileActionId.current) {
+        URL.revokeObjectURL(objectUrl);
+        return;
+      }
+      if (talentProfilePreviewUrlRef.current) {
+        URL.revokeObjectURL(talentProfilePreviewUrlRef.current);
+      }
+      talentProfilePreviewUrlRef.current = objectUrl;
+      setTalentProfilePreviewUrl(objectUrl);
+    } catch (profileError) {
+      if (actionId === talentProfileActionId.current) {
+        handleTalentProfileFileError(profileError, "人才画像打开失败，请稍后重试");
+      }
+    } finally {
+      if (actionId === talentProfileActionId.current) {
+        setTalentProfileAction("");
+      }
+    }
+  }
+
+  async function downloadTalentProfile() {
+    if (talentProfileStatus !== "available" || talentProfileAction) return;
+    const actionId = talentProfileActionId.current + 1;
+    talentProfileActionId.current = actionId;
+    setTalentProfileAction("download");
+    setTalentProfileError("");
+    try {
+      const result = await api.talentProfileFile();
+      if (actionId !== talentProfileActionId.current) return;
+      if (!result.blob.size) {
+        throw new Error("人才画像文件为空，请联系管理员重新发布");
+      }
+
+      const objectUrl = URL.createObjectURL(result.blob);
+      const downloadLink = document.createElement("a");
+      downloadLink.href = objectUrl;
+      downloadLink.download = talentProfileMeta?.original_filename || "我的人才画像.html";
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      downloadLink.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    } catch (profileError) {
+      if (actionId === talentProfileActionId.current) {
+        handleTalentProfileFileError(profileError, "人才画像下载失败，请稍后重试");
+      }
+    } finally {
+      if (actionId === talentProfileActionId.current) {
+        setTalentProfileAction("");
+      }
+    }
+  }
 
   async function loadMyWorks() {
     try {
@@ -3538,6 +3702,68 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
         </div>
       </div>
 
+      <section className={`profileTalentCard ${talentProfileStatus}`} aria-live="polite">
+        <div className="profileTalentIcon" aria-hidden="true">✦</div>
+        <div className="profileTalentCopy">
+          <div className="profileTalentHeading">
+            <div>
+              <span>人才画像</span>
+              <strong>我的人才画像</strong>
+            </div>
+            <em>
+              {talentProfileStatus === "available"
+                ? "已发布"
+                : talentProfileStatus === "unavailable"
+                  ? "未发布"
+                  : talentProfileStatus === "error"
+                    ? "读取失败"
+                    : "查询中"}
+            </em>
+          </div>
+          {talentProfileStatus === "available" ? (
+            <>
+              <p>从优势特征、行为风格与发展潜力，看见更完整的自己。</p>
+              <small title={talentProfileMeta?.original_filename || ""}>
+                {talentProfileMeta?.original_filename || "新员工人才画像报告.html"}
+                {" · "}
+                {formatFileSize(talentProfileMeta?.file_size)}
+                {talentProfileMeta?.updated_at ? ` · 更新于 ${formatFullDate(talentProfileMeta.updated_at)}` : ""}
+              </small>
+            </>
+          ) : talentProfileStatus === "unavailable" ? (
+            <p>你的专属人才画像尚未发布，发布后即可在这里查看和下载。</p>
+          ) : talentProfileStatus === "error" ? (
+            <p className="profileTalentError" role="alert">{talentProfileError}</p>
+          ) : (
+            <p>正在确认你的专属人才画像，请稍候...</p>
+          )}
+        </div>
+        <div className="profileTalentActions">
+          {talentProfileStatus === "error" ? (
+            <button className="primary" onClick={loadTalentProfile} type="button">重新加载</button>
+          ) : (
+            <>
+              <button
+                className="primary"
+                disabled={talentProfileStatus !== "available" || Boolean(talentProfileAction)}
+                onClick={openTalentProfile}
+                type="button"
+              >
+                {talentProfileAction === "view" ? "正在打开..." : "查看画像"}
+              </button>
+              <button
+                className="secondary"
+                disabled={talentProfileStatus !== "available" || Boolean(talentProfileAction)}
+                onClick={downloadTalentProfile}
+                type="button"
+              >
+                {talentProfileAction === "download" ? "准备下载..." : "下载 HTML"}
+              </button>
+            </>
+          )}
+        </div>
+      </section>
+
       <button className="profileReplayCard" onClick={onReplayWelcome} type="button">
         <img src={mascotUiMain} alt="" />
         <div>
@@ -3679,6 +3905,53 @@ function ProfileView({ profile, onLogout, onProfileSaved, onReplayWelcome }) {
           </form>
         )}
       </div>
+      {talentProfilePreviewUrl && (
+        <div className="talentProfilePreviewBackdrop" onClick={closeTalentProfilePreview} role="presentation">
+          <section
+            className="talentProfilePreviewDialog"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-label="我的人才画像"
+            aria-modal="true"
+          >
+            <header className="talentProfilePreviewToolbar">
+              <div className="talentProfilePreviewHeading">
+                <strong>我的人才画像</strong>
+                <small title={talentProfileMeta?.original_filename || ""}>
+                  {talentProfileMeta?.original_filename || "新员工人才画像报告.html"}
+                </small>
+              </div>
+              <div className="talentProfilePreviewActions">
+                <button
+                  className="talentProfilePreviewDownload"
+                  disabled={Boolean(talentProfileAction)}
+                  onClick={downloadTalentProfile}
+                  type="button"
+                >
+                  {talentProfileAction === "download" ? "准备下载..." : "下载"}
+                </button>
+                <button
+                  className="talentProfilePreviewClose"
+                  onClick={closeTalentProfilePreview}
+                  type="button"
+                  aria-label="关闭人才画像"
+                >
+                  ×
+                </button>
+              </div>
+            </header>
+            {talentProfileError && (
+              <p className="talentProfilePreviewError" role="alert">{talentProfileError}</p>
+            )}
+            <iframe
+              referrerPolicy="no-referrer"
+              sandbox="allow-scripts"
+              src={talentProfilePreviewUrl}
+              title="我的人才画像报告"
+            />
+          </section>
+        </div>
+      )}
     </section>
   );
 }
@@ -3982,6 +4255,35 @@ function genderLabel(value) {
 
 function scoreWork(work) {
   return (work.like_count ?? 0) + (work.vote_count ?? 0);
+}
+
+async function buildTalentProfilePreviewBlob(fileBlob) {
+  const html = await fileBlob.text();
+  if (!html.trim()) {
+    throw new Error("人才画像文件为空，请联系管理员重新发布");
+  }
+
+  const previewDocument = new DOMParser().parseFromString(html, "text/html");
+  const documentElement = previewDocument.documentElement;
+  const head = previewDocument.head;
+  if (!documentElement || documentElement.tagName !== "HTML" || !head) {
+    throw new Error("人才画像预览安全策略注入失败，请下载后查看");
+  }
+
+  const cspMeta = previewDocument.createElement("meta");
+  cspMeta.setAttribute("http-equiv", "Content-Security-Policy");
+  cspMeta.setAttribute("content", TALENT_PROFILE_PREVIEW_CSP);
+  head.prepend(cspMeta);
+
+  const injectedCsp = head.querySelector('meta[http-equiv="Content-Security-Policy"]');
+  if (injectedCsp?.getAttribute("content") !== TALENT_PROFILE_PREVIEW_CSP) {
+    throw new Error("人才画像预览安全策略注入失败，请下载后查看");
+  }
+
+  return new Blob(
+    [`<!DOCTYPE html>\n${documentElement.outerHTML}`],
+    { type: "text/html;charset=utf-8" },
+  );
 }
 
 function formatFileSize(size) {

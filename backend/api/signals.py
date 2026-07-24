@@ -2,7 +2,7 @@ from django.contrib.auth.models import User
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
-from .models import Course, CourseResource, Profile, Work, WorkImage
+from .models import Course, CourseResource, Profile, TalentProfileReport, Work, WorkImage
 
 
 @receiver(post_save, sender=User)
@@ -39,3 +39,9 @@ def delete_course_resource_file(sender, instance, **kwargs):
 def delete_course_mind_map_file(sender, instance, **kwargs):
     if instance.mind_map:
         instance.mind_map.delete(save=False)
+
+
+@receiver(post_delete, sender=TalentProfileReport)
+def delete_talent_profile_report_file(sender, instance, **kwargs):
+    if instance.file:
+        instance.file.delete(save=False)
